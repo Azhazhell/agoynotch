@@ -44,11 +44,13 @@ final class NotchViewModel: ObservableObject {
     /// itself is always `windowSize` (see below), never the collapsed size.
     private(set) var collapsedSize = CGSize(width: 200, height: 32)
 
-    /// Expanded Now Playing panel size (points). Sized toward the NotchNook ballpark
-    /// (~460–520 wide, ~220–260 tall) so the panel that drops out of the notch feels like
-    /// NotchNook rather than a thin strip, with comfortable room for the album art, the
-    /// title/album/artist stack, and the transport controls BELOW the notch-width top band.
-    let expandedSize = CGSize(width: 480, height: 240)
+    /// Expanded panel size (points). Widened toward the NotchNook ballpark (~560–640 wide,
+    /// ~220–260 tall) so the panel that drops out of the notch comfortably fits TWO columns
+    /// side by side BELOW the notch-width top band: the Now Playing section (album art +
+    /// title/album/artist stack + transport controls) on the LEFT and the live clock +
+    /// calendar section on the RIGHT, with a subtle divider between them — rather than a thin
+    /// single-column strip.
+    let expandedSize = CGSize(width: 600, height: 240)
 
     /// Height of the panel's notch-width TOP BAND, i.e. the strip at the very top of the
     /// expanded panel that is as wide as the hardware notch and sits directly beneath it.

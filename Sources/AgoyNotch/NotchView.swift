@@ -140,13 +140,34 @@ struct NotchView: View {
 
     // MARK: - Content
 
-    @ViewBuilder
+    /// The expanded panel body: the Now Playing section on the LEFT and the new live
+    /// clock + calendar section on the RIGHT, separated by a subtle vertical divider —
+    /// matching the NotchNook reference. Both columns live BELOW the notch-width top band
+    /// (the padding is applied by `expandedPanel`), so neither is hidden behind the physical
+    /// notch cutout.
     private var content: some View {
-        if info.hasMedia {
-            nowPlayingPanel
-        } else {
-            nothingPlayingPanel
+        HStack(alignment: .top, spacing: 18) {
+            // LEFT: the existing Now Playing section, unchanged.
+            Group {
+                if info.hasMedia {
+                    nowPlayingPanel
+                } else {
+                    nothingPlayingPanel
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Subtle vertical divider between the two sections.
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+
+            // RIGHT: live clock (ticking seconds) + today's date / mini-week.
+            ClockCalendarView()
+                .frame(width: 190, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// The full Now Playing panel, laid out for the taller NotchNook-sized body: a top row

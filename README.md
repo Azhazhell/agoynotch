@@ -8,8 +8,10 @@ continuous notch rather than a second box below it. While Apple Music is playing
 small music glyph just left of the notch and an animated equalizer just right. Hover the
 notch and it expands downward with a spring animation into a Now Playing panel — album art,
 title, artist, and prev / play-pause / next transport controls — then collapses when you move
-away. It is a native macOS app written in Swift (AppKit + SwiftUI), with **no third-party
-dependencies**.
+away. The expanded panel also carries a second section beside Now Playing: a **live clock
+(ticking every second) and a compact calendar** — a month label, a large current-day number,
+and a one-week strip of weekday letters with today highlighted. It is a native macOS app
+written in Swift (AppKit + SwiftUI), with **no third-party dependencies**.
 
 > **Why this exists:** closed-source "notch" utilities ask you to trust a binary. AgoyNotch is
 > the opposite — the entire source is here, it makes **no network calls** and collects **no
@@ -19,10 +21,11 @@ dependencies**.
 ┌───────────────[ ● notch ● ]───────────────┐   ← collapsed pill hugging the notch
                       │ hover
                       ▼
-        ┌──────────────────────────────┐
-        │  🎵  Song Title               │       ← expanded Now Playing panel
-        │      Artist      ⏮  ⏯  ⏭      │
-        └──────────────────────────────┘
+        ┌───────────────────────────────────────────────┐
+        │  🎵  Song Title        │   12:34:56            │  ← Now Playing (left)
+        │      Artist  ⏮ ⏯ ⏭     │   Aug  7              │    + live clock & calendar (right)
+        │                        │   S M T W T F S        │
+        └───────────────────────────────────────────────┘
 ```
 
 *(Screenshot placeholder — add a real capture here once you build and run.)*
@@ -70,6 +73,23 @@ notch and an animated equalizer just right. If the seam is a hair off on your Ma
 
 Each click repositions the overlay immediately, and your adjustments are **saved and restored
 across launches** (stored locally in `UserDefaults` — no network, no telemetry).
+
+## Live clock & calendar
+
+Beside the Now Playing section, the expanded panel shows a **live clock and a compact
+calendar**, laid out as the right-hand column with a subtle divider between the two sections:
+
+- **Live clock** — the time ticks every second (24-hour `HH:mm:ss`) while the panel is
+  expanded. It is driven by SwiftUI's `TimelineView(.periodic(from: .now, by: 1))`, so there
+  is no manual `Timer` to leak or tear down and the updates pause automatically when the panel
+  is collapsed.
+- **Calendar** — a month label (e.g. `Aug`), a large current-day number, and a one-week strip
+  of weekday letters with today highlighted, plus a tasteful **"Nothing for today"** line.
+
+Everything is computed **locally** from `Date` / `Calendar.current` / `Locale.current` /
+`DateFormatter` and follows your system locale and calendar. There is **no network**, **no
+telemetry**, and **no Calendar-events (EventKit) integration** — the "Nothing for today" line
+is a static placeholder, not a read of your real events.
 
 ## Now Playing & permissions
 
@@ -143,7 +163,8 @@ AgoyNotch/
     NotchWindow.swift                 borderless non-activating NSPanel + hover tracking area
     NotchWindowController.swift       notch geometry + placement + resize on expand/collapse
     NotchViewModel.swift              expand/collapse state, hover debounce, panel sizes
-    NotchView.swift                   SwiftUI collapsed pill + expanded Now Playing panel
+    NotchView.swift                   SwiftUI collapsed pill + expanded panel (Now Playing + clock/calendar)
+    ClockCalendarView.swift           right column: live ticking clock + compact calendar (local Date/Calendar)
     VisualEffectView.swift            NSVisualEffectView frosted-glass backdrop
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
