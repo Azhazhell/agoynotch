@@ -4,8 +4,8 @@
 //
 //  Wires the app together at launch: hides the Dock icon (accessory activation policy),
 //  builds the Now Playing service → view model → window controller chain, shows the notch
-//  panel, and installs the menu-bar status item with a Quit command. Also bridges the view
-//  model's expand/collapse state to the window controller so the panel resizes.
+//  panel, and installs the menu-bar status item with a Quit command. The collapsed↔expanded
+//  morph is a SwiftUI spring inside a fixed-size window, so there is no resize to bridge.
 //
 
 import AppKit
@@ -103,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add("Move Up", #selector(moveUp))
         add("Wider", #selector(makeWider))
         add("Narrower", #selector(makeNarrower))
+        add("Taller", #selector(makeTaller))
+        add("Shorter", #selector(makeShorter))
         submenu.addItem(.separator())
         add("Reset Position", #selector(resetPosition))
 
@@ -148,8 +150,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commitSettings()
     }
 
+    @objc private func makeTaller() {
+        settings.heightAdjustment += adjustStep
+        commitSettings()
+    }
+
+    @objc private func makeShorter() {
+        settings.heightAdjustment -= adjustStep
+        commitSettings()
+    }
+
     @objc private func resetPosition() {
-        settings.reset() // resets all three offsets to 0 and persists.
+        settings.reset() // resets ALL offsets (horizontal, vertical, width, height) to 0.
         windowController.applySettings(settings)
     }
 

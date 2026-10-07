@@ -2,8 +2,10 @@
 
 Turn your MacBook's hardware camera notch into a Dynamic Island–style interactive surface.
 
-AgoyNotch sits flush under the real notch as a thin, nearly invisible pill. When media is
-playing it shows a tiny album-art thumbnail and an animated audio-bars indicator. Hover the
+AgoyNotch merges with the real hardware notch: when idle the collapsed overlay is a black
+shape anchored to the top of the screen at the notch's height, so it reads as a single
+continuous notch rather than a second box below it. While Apple Music is playing it shows a
+small music glyph just left of the notch and an animated equalizer just right. Hover the
 notch and it expands downward with a spring animation into a Now Playing panel — album art,
 title, artist, and prev / play-pause / next transport controls — then collapses when you move
 away. It is a native macOS app written in Swift (AppKit + SwiftUI), with **no third-party
@@ -38,7 +40,7 @@ This is a Swift Package Manager **executable** package (text-only `Package.swift
 `.xcodeproj`), which opens and builds reliably in Xcode.
 
 1. Open the manifest in Xcode:
-   `/projects/sandbox/MacNotch/Package.swift`
+   `/projects/sandbox/agoynotch/Package.swift`
 2. Select the **My Mac** run destination.
 3. Press **Run** (⌘R).
 
@@ -53,32 +55,57 @@ from the **menu bar → Adjust Notch** submenu:
 
 - **Move Left** / **Move Right** — shift the overlay horizontally (±2 pt per click).
 - **Move Down** / **Move Up** — nudge the overlay vertically from the top edge (±2 pt).
-- **Wider** / **Narrower** — grow or shrink the collapsed pill's width (±2 pt).
-- **Reset Position** — clear all adjustments back to the pure auto-detected geometry.
+- **Wider** / **Narrower** — grow or shrink the collapsed shape's width (±2 pt).
+- **Taller** / **Shorter** — grow or shrink the collapsed shape's height / vertical
+  coverage (±2 pt), so you can make the black overlay exactly cover your real notch.
+- **Reset Position** — clear all adjustments (horizontal, vertical, width, height) back to
+  the pure auto-detected geometry.
+
+The collapsed overlay is designed to **merge with the hardware notch**: its top edge is
+anchored to the physical top of the display and its height matches the notch height
+(`NSScreen.safeAreaInsets.top`), with flat top corners so it reads as one continuous notch
+rather than a second black box hanging below. A small music glyph sits just left of the
+notch and an animated equalizer just right. If the seam is a hair off on your Mac, use
+**Taller/Shorter** and **Wider/Narrower** to dial it in.
 
 Each click repositions the overlay immediately, and your adjustments are **saved and restored
 across launches** (stored locally in `UserDefaults` — no network, no telemetry).
 
-## Permissions & signing
+## Now Playing & permissions
 
-AgoyNotch reads Now Playing information through Apple's **private** `MediaRemote` framework,
-loaded at runtime with `dlopen`/`dlsym`. Because of that:
+**Now Playing uses AppleScript to Apple Music** (`Music.app`). AgoyNotch polls Music's
+`player state` and the current track's name / artist / album, and reads album art as raw
+local image bytes via `data of artwork 1 of current track`. Apple Music works best; this is
+the live data source on macOS 27.
 
-- **Run it locally from Xcode** (or sign it ad-hoc). The App Sandbox blocks loading private
-  frameworks, so there is no sandbox entitlement here — build & run on your own Mac.
-- **macOS 15.4+ caveat.** Since macOS 15.4 the system `mediaremoted` daemon verifies caller
-  entitlements before handing back Now Playing data. On macOS 27 an unentitled build may
-  therefore receive **empty** info even though the framework loaded fine. When that happens the
-  panel honestly shows **"Nothing playing"** rather than guessing.
-  - **Fallback / workaround:** drive media through the Control Center media widget, and watch
-    this repo's roadmap for an alternative adapter (e.g. a scripting-based bridge) that does not
-    depend on the private daemon returning data to unentitled callers.
+- **Grant Automation permission on first run.** The first time AgoyNotch sends an AppleScript
+  command to Music, macOS shows an **Automation** consent prompt — click **OK / Allow**. You
+  can review or re-enable it later under **System Settings → Privacy & Security → Automation**.
+  If you deny it, the panel honestly shows **"Nothing playing"** instead of crashing.
+- **Unbundled executable caveat.** Because this ships as a Swift Package Manager executable
+  (no real `.app` bundle / `Info.plist`), the Automation prompt can be flaky or may not persist
+  reliably. The proper fix is to run AgoyNotch as a **bundled, signed `.app`** so macOS can
+  attach the Automation grant to a stable bundle identifier. Until then, every AppleScript call
+  degrades gracefully: if Music isn't running or the script isn't authorized (error `-1743`),
+  AgoyNotch logs a concise message and shows "Nothing playing".
+- **Graceful behavior.** If Music is stopped, not running, or unauthorized, the panel shows
+  "Nothing playing" — it never forces Music to launch just to query it.
 
-## App Store note
+### Why AppleScript (historical MediaRemote note)
 
-Because AgoyNotch uses a **private Apple framework**, it is **not eligible for the Mac App
-Store**. For distribution outside the store, notarize the signed app; for personal use, running
-straight from Xcode is enough.
+Earlier builds read Now Playing through Apple's **private** `MediaRemote` framework
+(`dlopen`/`dlsym`; see `MediaRemoteBridge.swift`, kept as dormant historical code). Since
+**macOS 15.4** the system `mediaremoted` daemon verifies caller entitlements before handing
+back Now Playing data, so on **macOS 27** an unentitled build receives **empty** info and the
+panel always read "Nothing playing". AppleScript to a scriptable player still works, so it is
+now the live source. `MediaRemoteBridge` remains in the tree only to document that path.
+
+## App Store & signing note
+
+Running straight from Xcode on your own Mac is enough for personal use. The dormant
+`MediaRemoteBridge` uses a **private Apple framework**, which is **not eligible for the Mac
+App Store**; for distribution outside the store, notarize a signed, bundled `.app` (which
+also makes the Automation permission for Apple Music persist reliably).
 
 ## Privacy
 
@@ -120,6 +147,7 @@ AgoyNotch/
     VisualEffectView.swift            NSVisualEffectView frosted-glass backdrop
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
-      MediaRemoteBridge.swift         isolated private-MediaRemote dlopen/dlsym boundary
-      NowPlayingManager.swift         observable Now Playing service + transport commands
+      AppleScriptNowPlaying.swift     LIVE source: AppleScript → Apple Music (status + transport)
+      MediaRemoteBridge.swift         dormant historical private-MediaRemote dlopen/dlsym boundary
+      NowPlayingManager.swift         observable Now Playing service (polls AppleScript) + transport
 ```

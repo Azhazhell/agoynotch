@@ -34,25 +34,39 @@ final class NotchViewModel: ObservableObject {
     private let collapseDebounce: TimeInterval = 0.35
 
     /// Collapsed pill size. Width/height are supplied by the window controller from the
-    /// measured notch geometry via `updateCollapsedSize(_:)`; these are only fallbacks.
-    /// This drives only the SwiftUI pill drawn inside the fixed window — the WINDOW itself
-    /// is always `windowSize` (see below), never the collapsed size.
+    /// measured notch geometry (safeAreaInsets.top for height, the gap between the two
+    /// auxiliary top areas for width) plus the user's width/height adjustments, via
+    /// `updateCollapsedSize(_:)`; these are only fallbacks.
+    ///
+    /// This drives the SwiftUI collapsed shape drawn TOP-ANCHORED inside the fixed window
+    /// so its top edge sits at the physical top of the screen and it coincides with the
+    /// real hardware notch (height ≈ notch height) rather than hanging below it. The WINDOW
+    /// itself is always `windowSize` (see below), never the collapsed size.
     private(set) var collapsedSize = CGSize(width: 200, height: 32)
 
     /// Expanded Now Playing panel size (points).
     let expandedSize = CGSize(width: 390, height: 128)
 
-    /// The fixed on-screen size of the NSWindow. It is ALWAYS the expanded size, regardless
-    /// of `isExpanded`.
+    /// Height reserved at the top of the window for the collapsed shape / physical notch.
+    /// The expanded panel is pushed DOWN by this much (see `NotchView.body`) so it hangs
+    /// below the notch instead of overlapping it. Mirrors the measured collapsed height and
+    /// is used both to size the window and to place the click-through interactive rect.
+    var notchInset: CGFloat { collapsedSize.height }
+
+    /// The fixed on-screen size of the NSWindow. It is ALWAYS large enough to hold the
+    /// expanded panel pushed down below the notch, regardless of `isExpanded`.
     ///
     /// This is the heart of the hover-collapse bug fix: the window never resizes when the
     /// panel expands or collapses. Because the window (and therefore the hosting view's
-    /// tracking area) is permanently as large as the expanded panel, the cursor can travel
-    /// from the notch down onto the transport buttons without ever leaving the tracked
-    /// region — so no spurious `mouseExited` fires and the panel stays open. The SwiftUI
-    /// content simply paints either the small collapsed pill (top-centered) or the full
-    /// expanded panel inside this fixed frame; the surrounding area is transparent.
-    var windowSize: CGSize { expandedSize }
+    /// tracking area) is permanently as large as the expanded panel (plus the notch inset
+    /// above it), the cursor can travel from the notch down onto the transport buttons
+    /// without ever leaving the tracked region — so no spurious `mouseExited` fires and the
+    /// panel stays open. The SwiftUI content simply paints either the small collapsed shape
+    /// (flush at the top, over the notch) or the full expanded panel (dropped below the
+    /// notch) inside this fixed frame; the surrounding area is transparent.
+    var windowSize: CGSize {
+        CGSize(width: expandedSize.width, height: expandedSize.height + notchInset)
+    }
 
     // MARK: - Private
 

@@ -25,15 +25,27 @@ struct NotchView: View {
     /// Convenience accessor for the current media snapshot.
     private var info: NowPlayingInfo { viewModel.nowPlaying.info }
 
-    // Corner radii: bottom corners rounder than the top for the notch look.
-    private let topCornerRadius: CGFloat = 8
-    private let bottomCornerRadius: CGFloat = 22
+    // Corner radii. The COLLAPSED shape keeps its TOP corners flat/minimal and only its
+    // BOTTOM corners rounded, so it reads as a seamless continuation of the hardware notch
+    // (whose own top edge is the flat top of the screen). The expanded panel is rounded on
+    // all four corners like a Dynamic-Island card.
+    private let collapsedTopCornerRadius: CGFloat = 0
+    private let collapsedBottomCornerRadius: CGFloat = 10
+    private let expandedTopCornerRadius: CGFloat = 10
+    private let expandedBottomCornerRadius: CGFloat = 22
 
     var body: some View {
         // Top-anchored inside the fixed (expanded-sized) window. Only the container paints;
         // everything around it is transparent (and non-interactive for clicks via the
         // hosting view's hitTest).
+        //
+        // When COLLAPSED the container sits flush at the very top (y = 0 in SwiftUI's
+        // top-left space) so its black merges with the hardware notch. When EXPANDED we push
+        // the card DOWN by the notch height so the Dynamic-Island panel "hangs" just below
+        // the physical notch instead of overlapping it. The push is animated with the same
+        // spring as the morph.
         container
+            .padding(.top, viewModel.isExpanded ? viewModel.collapsedSize.height : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // Spring morph between collapsed and expanded, like Dynamic Island. The window
             // never resizes — only this SwiftUI content grows/shrinks.
@@ -43,11 +55,15 @@ struct NotchView: View {
     // MARK: - Container
 
     private var container: some View {
+        // Pick corner radii per state: flat top while collapsed (so it merges with the
+        // hardware notch), fully rounded while expanded.
+        let topRadius = viewModel.isExpanded ? expandedTopCornerRadius : collapsedTopCornerRadius
+        let bottomRadius = viewModel.isExpanded ? expandedBottomCornerRadius : collapsedBottomCornerRadius
         let shape = UnevenRoundedRectangle(
-            topLeadingRadius: topCornerRadius,
-            bottomLeadingRadius: bottomCornerRadius,
-            bottomTrailingRadius: bottomCornerRadius,
-            topTrailingRadius: topCornerRadius,
+            topLeadingRadius: topRadius,
+            bottomLeadingRadius: bottomRadius,
+            bottomTrailingRadius: bottomRadius,
+            topTrailingRadius: topRadius,
             style: .continuous
         )
 

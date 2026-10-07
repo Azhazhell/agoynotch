@@ -20,9 +20,9 @@ final class NotchWindowController: NSWindowController {
     private let viewModel: NotchViewModel
     private let hostingView: NotchHostingView
 
-    /// User fine-tuning (horizontal/vertical offset + width adjustment) layered on top of
-    /// the auto-detected notch geometry. Loaded from UserDefaults; updated live from the
-    /// menu-bar "Adjust Notch" commands via `applySettings(_:)`.
+    /// User fine-tuning (horizontal/vertical offset + width/height adjustment) layered on
+    /// top of the auto-detected notch geometry. Loaded from UserDefaults; updated live from
+    /// the menu-bar "Adjust Notch" commands via `applySettings(_:)`.
     private var settings = NotchSettings()
 
     /// Fallback collapsed size for Macs without a hardware notch.
@@ -61,9 +61,21 @@ final class NotchWindowController: NSWindowController {
         hosting.interactiveRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
             let full = hosting.bounds
-            let painted = viewModel.isExpanded ? viewModel.expandedSize : viewModel.collapsedSize
-            let width = min(painted.width, full.width)
-            let height = min(painted.height, full.height)
+            // Interactive width/height of the currently-painted content.
+            //  • Collapsed: just the small shape over the notch.
+            //  • Expanded: the shape is pushed DOWN by `notchInset`, so the interactive
+            //    region must span from the top (the notch) all the way through the dropped
+            //    panel — i.e. notchInset + expandedSize.height — so the cursor can travel
+            //    from the notch onto the transport buttons without leaving the region.
+            let width: CGFloat
+            let height: CGFloat
+            if viewModel.isExpanded {
+                width = min(viewModel.expandedSize.width, full.width)
+                height = min(viewModel.notchInset + viewModel.expandedSize.height, full.height)
+            } else {
+                width = min(viewModel.collapsedSize.width, full.width)
+                height = min(viewModel.collapsedSize.height, full.height)
+            }
             let x = full.midX - width / 2
             // The content is drawn top-anchored. The on-screen TOP edge is `maxY` in a
             // non-flipped view and `minY` in a flipped one, so pick the right edge based on
@@ -102,25 +114,40 @@ final class NotchWindowController: NSWindowController {
     }
 
     /// Measures the collapsed pill size from the notch geometry (or fallback), then applies
-    /// the user's `widthAdjustment` on top. The width is clamped to a small positive minimum
-    /// so an over-aggressive "Narrower" cannot collapse the pill to zero/negative width.
+    /// the user's `widthAdjustment` and `heightAdjustment` on top. Both dimensions are
+    /// clamped to a small positive minimum so over-aggressive "Narrower"/"Shorter" cannot
+    /// collapse the shape to zero/negative size.
+    ///
+    /// Width comes from the gap between the two auxiliary top areas (the physical notch
+    /// width); we add a little slack so a small music glyph fits just LEFT of the notch and
+    /// the equalizer just RIGHT of it, so the collapsed shape hugs the notch while leaving
+    /// room for the two indicators. Height comes from `safeAreaInsets.top` (the notch
+    /// height / menu-bar strip) so the black shape coincides with the real notch's height
+    /// instead of adding a second shape beneath it.
     private func measuredCollapsedSize(for screen: NSScreen?) -> CGSize {
+        // Extra width (points) beyond the bare notch so the glyph + equalizer sit beside it.
+        let indicatorSlack: CGFloat = 56
+
         let base: CGSize
         if let screen, screen.safeAreaInsets.top > 0 {
             let left = screen.auxiliaryTopLeftArea?.width ?? 0
             let right = screen.auxiliaryTopRightArea?.width ?? 0
+            // Notch width = full screen width minus the usable areas either side of it.
             let notchWidth = screen.frame.width - left - right
             let notchHeight = screen.safeAreaInsets.top
             // Guard against degenerate measurements.
             base = (notchWidth > 0 && notchHeight > 0)
-                ? CGSize(width: notchWidth, height: notchHeight)
+                ? CGSize(width: notchWidth + indicatorSlack, height: notchHeight)
                 : fallbackCollapsedSize
         } else {
             base = fallbackCollapsedSize
         }
 
         let adjustedWidth = max(1, base.width + settings.widthAdjustment)
-        return CGSize(width: adjustedWidth, height: base.height)
+        // heightAdjustment lets the user make the collapsed black shape exactly cover their
+        // real notch's vertical extent when safeAreaInsets.top is a hair off.
+        let adjustedHeight = max(1, base.height + settings.heightAdjustment)
+        return CGSize(width: adjustedWidth, height: adjustedHeight)
     }
 
     // MARK: - Placement
@@ -150,9 +177,17 @@ final class NotchWindowController: NSWindowController {
         }
 
         // Start from the auto-detected placement: horizontally centered on the notch and
-        // pinned to the top edge (maxY in AppKit's bottom-left coordinate space). Because
-        // the window is the expanded width, centering it on the notch also centers the
-        // collapsed pill (which SwiftUI draws top-centered inside the window).
+        // pinned to the TOP edge of the screen (maxY in AppKit's bottom-left coordinate
+        // space; a top-anchored window of height H therefore has origin.y = maxY - H).
+        // Because the window is the expanded width, centering it on the notch also centers
+        // the collapsed shape (which SwiftUI draws top-centered inside the window), and
+        // because the window top is exactly screen-top, the top-anchored collapsed shape's
+        // top edge lands at the physical top of the display — flush over the hardware notch
+        // rather than below it.
+        //
+        // Default offsets are all 0 (see NotchSettings) precisely so this auto-detected
+        // placement already sits the collapsed shape ON the notch; the user only needs tiny
+        // Move/Wider/Taller nudges to perfect the seam on their specific hardware.
         var originX = screenFrame.midX - size.width / 2
         var originY = screenFrame.maxY - size.height
 
@@ -161,7 +196,10 @@ final class NotchWindowController: NSWindowController {
         //  • verticalOffset: positive nudges the overlay DOWN. Because AppKit's origin is
         //    bottom-left, moving down means DECREASING originY, so we subtract it.
         // These shift the WHOLE fixed-size overlay so it lines up with the real notch;
-        // widthAdjustment is handled separately (it only tunes the drawn collapsed pill).
+        // width/heightAdjustment are handled separately in `measuredCollapsedSize` (they
+        // tune the drawn collapsed shape, and heightAdjustment also feeds the notch inset /
+        // window height via viewModel.windowSize — which is why updateCollapsedSize above
+        // runs before we read `size`).
         originX += settings.horizontalOffset
         originY -= settings.verticalOffset
 

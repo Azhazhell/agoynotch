@@ -7,7 +7,7 @@
 //  The window controller auto-detects the hardware notch geometry (see
 //  NotchWindowController). That measurement is correct on most Macs, but the exact pixel
 //  seam between the physical notch and the overlay can differ slightly across models.
-//  These three offsets let the user nudge the overlay so it lines up perfectly with their
+//  These four offsets let the user nudge the overlay so it lines up perfectly with their
 //  own hardware notch. They are ADDED ON TOP of the auto-detected geometry — the app still
 //  measures the notch first, then applies these adjustments.
 //
@@ -29,6 +29,7 @@ struct NotchSettings {
         static let horizontalOffset = "AgoyNotch.horizontalOffset"
         static let verticalOffset   = "AgoyNotch.verticalOffset"
         static let widthAdjustment  = "AgoyNotch.widthAdjustment"
+        static let heightAdjustment = "AgoyNotch.heightAdjustment"
     }
 
     /// Shifts the overlay left (negative) / right (positive) from the auto-detected center.
@@ -39,6 +40,12 @@ struct NotchSettings {
 
     /// Added to the measured collapsed pill width (positive = wider, negative = narrower).
     var widthAdjustment: CGFloat
+
+    /// Added to the measured collapsed pill HEIGHT, i.e. how far down the collapsed black
+    /// shape extends from the top of the screen (positive = taller / more vertical
+    /// coverage, negative = shorter). Lets the user make the overlay exactly cover their
+    /// real notch's height when `safeAreaInsets.top` is a hair off.
+    var heightAdjustment: CGFloat
 
     // MARK: - Persistence
 
@@ -53,6 +60,7 @@ struct NotchSettings {
         self.horizontalOffset = CGFloat(defaults.double(forKey: Key.horizontalOffset))
         self.verticalOffset   = CGFloat(defaults.double(forKey: Key.verticalOffset))
         self.widthAdjustment  = CGFloat(defaults.double(forKey: Key.widthAdjustment))
+        self.heightAdjustment = CGFloat(defaults.double(forKey: Key.heightAdjustment))
     }
 
     /// Persist the current values back to the defaults suite.
@@ -60,6 +68,7 @@ struct NotchSettings {
         defaults.set(Double(horizontalOffset), forKey: Key.horizontalOffset)
         defaults.set(Double(verticalOffset), forKey: Key.verticalOffset)
         defaults.set(Double(widthAdjustment), forKey: Key.widthAdjustment)
+        defaults.set(Double(heightAdjustment), forKey: Key.heightAdjustment)
     }
 
     /// Reset all adjustments back to `0` (pure auto-detected geometry) and persist.
@@ -67,6 +76,7 @@ struct NotchSettings {
         horizontalOffset = 0
         verticalOffset = 0
         widthAdjustment = 0
+        heightAdjustment = 0
         save()
     }
 }
