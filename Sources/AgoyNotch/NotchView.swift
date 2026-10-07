@@ -47,6 +47,12 @@ struct NotchView: View {
         container
             .padding(.top, viewModel.isExpanded ? viewModel.collapsedSize.height : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // "Hangs below the notch" fix: ignore the safe area so SwiftUI does NOT inset
+            // this content below the hardware notch / menu bar. Combined with the hosting
+            // view returning zero `safeAreaInsets` (see NotchHostingView), this guarantees
+            // the top-anchored collapsed pill's top edge sits at the physical top of the
+            // display and fuses with the real notch instead of hanging below it.
+            .ignoresSafeArea(.all)
             // Spring morph between collapsed and expanded, like Dynamic Island. The window
             // never resizes — only this SwiftUI content grows/shrinks.
             .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.isExpanded)
@@ -68,23 +74,28 @@ struct NotchView: View {
         )
 
         return ZStack {
-            // Frosted backdrop only when expanded; collapsed stays near-pure black so it
-            // blends into the physical notch.
+            // Collapsed END state = COMPLETELY INVISIBLE. The user wants to see only their
+            // real, untouched hardware notch when idle, so we draw NOTHING while collapsed —
+            // no black pill, no Apple-Music glyph, no equalizer, no shape at all. We keep a
+            // transparent `Color.clear` placeholder so the container still has a defined
+            // frame (which the layout and the top padding above rely on); it paints nothing.
+            //
+            // Frosted backdrop + content are drawn ONLY when expanded. Hover detection does
+            // not depend on anything painted here: it is driven by the NSTrackingArea in
+            // NotchHostingView, which stays positioned over the physical notch even while
+            // this collapsed state paints nothing (drawing is decoupled from tracking).
             if viewModel.isExpanded {
                 VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                 Color.black.opacity(0.55)
-            } else {
-                Color.black
-            }
 
-            content
-                // Collapsed: tight horizontal padding so the music glyph sits just inside
-                // the LEFT edge and the equalizer just inside the RIGHT edge of the
-                // near-notch-width black shape — making them read as living WITHIN the
-                // hardware notch rather than on a separate strip. Small vertical padding
-                // keeps them centered in the notch-height shape.
-                .padding(.horizontal, viewModel.isExpanded ? 14 : 6)
-                .padding(.vertical, viewModel.isExpanded ? 12 : 2)
+                content
+                    // Expanded padding only; the collapsed branch draws nothing.
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+            } else {
+                // Nothing visible when collapsed.
+                Color.clear
+            }
         }
         .clipShape(shape)
         .frame(
@@ -95,20 +106,23 @@ struct NotchView: View {
 
     // MARK: - Content
 
+    /// Content painted inside the container. Only the EXPANDED panel is ever shown; the
+    /// collapsed state is fully invisible (see `container`, which draws `Color.clear` while
+    /// collapsed and never calls this). `collapsedContent` below is retained for reference
+    /// but is intentionally no longer rendered.
     @ViewBuilder
     private var content: some View {
-        if viewModel.isExpanded {
-            expandedContent
-        } else {
-            collapsedContent
-        }
+        expandedContent
     }
 
-    // MARK: Collapsed
+    // MARK: Collapsed (retained, no longer rendered)
 
     /// Minimal pill hugging the hardware notch: an Apple-Music-style glyph on the left and
-    /// an animated equalizer on the right. When nothing is playing the indicators fade so
-    /// only the black notch shape shows and it blends into the hardware notch.
+    /// an animated equalizer on the right.
+    ///
+    /// NOTE: this is intentionally NOT rendered anymore. The collapsed state is now fully
+    /// invisible (`container` paints `Color.clear`), per the user's decision to show only
+    /// the real hardware notch when idle. Kept here for reference / possible future use.
     private var collapsedContent: some View {
         HStack(spacing: 0) {
             // LEFT: Apple-Music-style activity glyph.

@@ -18,13 +18,41 @@ final class NotchHostingView: NSHostingView<NotchView> {
     /// Called with `true` on mouse-enter and `false` on mouse-exit.
     var onHoverChange: ((Bool) -> Void)?
 
-    /// Supplies the current hit-test region for click pass-through. In screen-free view
-    /// coordinates (origin top-left of this view). When collapsed, this is just the small
-    /// pill at the top; when expanded it is the whole panel. `nil` means "accept clicks
-    /// everywhere" (defensive fallback). Set by the controller.
+    /// Supplies the current HIT-TEST region for click pass-through, in this view's
+    /// coordinate space. This is DECOUPLED from the hover-tracking region (see
+    /// `trackingRectProvider`): NSTrackingArea and hitTest are independent — hover can fire
+    /// at points where hitTest returns `nil`.
+    ///   • COLLAPSED → an EMPTY rect, because the collapsed state paints nothing, so clicks
+    ///     over the (invisible) notch region must pass straight through to the menu bar /
+    ///     desktop behind it.
+    ///   • EXPANDED  → the full painted panel, so clicks land on the transport buttons.
+    /// `nil` means "accept clicks everywhere" (defensive fallback). Set by the controller.
     var interactiveRectProvider: (() -> CGRect?)?
 
+    /// Supplies the current HOVER-TRACKING region, in this view's coordinate space. This is
+    /// INDEPENDENT of `interactiveRectProvider` (the hit-test region): drawing and clicks
+    /// are decoupled from hover.
+    ///   • COLLAPSED → the small notch-sized rect at the TOP CENTER (over the physical
+    ///     notch), EVEN THOUGH nothing is drawn there — so moving the cursor onto the real
+    ///     notch still fires `mouseEntered` and expands the panel.
+    ///   • EXPANDED  → the full dropped panel (notchInset + expandedSize.height), so the
+    ///     cursor can travel from the notch down onto the transport buttons without leaving
+    ///     the tracked region.
+    /// `nil` falls back to the whole `bounds`. Set by the controller.
+    var trackingRectProvider: (() -> CGRect?)?
+
     private var trackingArea: NSTrackingArea?
+
+    // "Hangs below the notch" fix (PRIME ROOT CAUSE): on a notched Mac the window's top
+    // edge sits at the physical top of the display, so this hosting view's safe area
+    // includes the hardware notch at the top. By default NSHostingView insets its SwiftUI
+    // content by that safe area, pushing the top-anchored collapsed pill DOWN by exactly
+    // the notch height — which is why the black overlay appeared *below* the real notch in
+    // the menu-bar strip instead of fused with it. Returning zero insets here stops AppKit
+    // from reserving the notch region, so the SwiftUI content's top edge == this view's top
+    // edge == the window top == the physical screen top. (`NotchView` also applies
+    // `.ignoresSafeArea()` as a belt-and-suspenders on the SwiftUI side.)
+    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -49,7 +77,13 @@ final class NotchHostingView: NSHostingView<NotchView> {
         // `.inVisibleRect` is intentionally dropped so the explicit `rect:` is honoured.
         // `refreshTracking()` re-runs this whenever the state (collapsed↔expanded) or the
         // collapsed size changes, swapping the tracked rect between the two sizes.
-        let trackedRect = interactiveRectProvider?() ?? bounds
+        //
+        // DECOUPLED FROM DRAWING / CLICKS: this uses `trackingRectProvider`, NOT
+        // `interactiveRectProvider`. While collapsed the view paints nothing and the
+        // hit-test rect is empty (clicks pass through), yet the tracked rect here is still
+        // the small notch-sized rect at the top center — so hovering the real hardware
+        // notch still fires `mouseEntered` and expands the panel.
+        let trackedRect = trackingRectProvider?() ?? bounds
         let area = NSTrackingArea(
             rect: trackedRect,
             options: [.mouseEnteredAndExited, .activeAlways],
@@ -77,12 +111,16 @@ final class NotchHostingView: NSHostingView<NotchView> {
 
     // MARK: - Click pass-through
 
-    /// Only the currently-painted region (collapsed pill or expanded panel) should swallow
-    /// clicks; the surrounding transparent area must pass clicks through to whatever is
-    /// behind the overlay (desktop, other apps). Returning `nil` from `hitTest` makes a
-    /// point transparent to clicks WITHOUT affecting the NSTrackingArea, so hover-to-expand
-    /// still fires everywhere over the window. This is how we keep hover working while not
-    /// permanently blocking the large transparent expanded-sized frame when collapsed.
+    /// Only the currently-painted region should swallow clicks; everything else must pass
+    /// clicks through to whatever is behind the overlay (desktop, other apps, the menu bar).
+    ///   • COLLAPSED → the view paints nothing, so `interactiveRectProvider` returns an
+    ///     EMPTY rect and EVERY click over the (invisible) notch region passes through.
+    ///   • EXPANDED  → the hit region is the full dropped panel, so clicks hit the
+    ///     transport buttons.
+    /// Returning `nil` from `hitTest` makes a point transparent to clicks WITHOUT affecting
+    /// the NSTrackingArea (which uses `trackingRectProvider`), so hover-to-expand still
+    /// fires over the physical notch even while collapsed clicks pass straight through. This
+    /// is the drawing/clicks ↔ hover decoupling in action.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let provider = interactiveRectProvider, let interactive = provider() else {
             // No provider configured → behave normally (accept clicks).

@@ -57,36 +57,60 @@ final class NotchWindowController: NSWindowController {
             viewModel?.hoverChanged(isInside)
         }
 
-        // Supply the click pass-through region. The window is permanently the expanded size
-        // but the painted content (collapsed pill or expanded panel) is top-centered inside
-        // it. Only that painted region should swallow clicks; the surrounding transparent
-        // area passes clicks through to the desktop/other apps. The hosting view is NOT
-        // flipped (AppKit default origin bottom-left), while the SwiftUI content is drawn
-        // top-anchored — so the interactive rect hugs the TOP edge (high y) of the view.
+        // DRAWING / CLICKS ↔ HOVER are DECOUPLED. The window is permanently the expanded
+        // size; the hosting view uses two independent providers:
+        //   • `trackingRectProvider`  → where the NSTrackingArea listens for hover.
+        //   • `interactiveRectProvider`→ where `hitTest` swallows clicks (else they pass
+        //                                 through to the desktop / menu bar / other apps).
+        // NSTrackingArea and hitTest are independent in AppKit, so hover can fire at points
+        // where hitTest returns `nil`. We exploit that: while collapsed the overlay paints
+        // NOTHING and swallows NO clicks, yet it still TRACKS hover over the physical notch.
+        //
+        // (See `topCenteredRect(width:height:in:)` for the shared geometry helper.)
+        //
+        // HOVER-TRACKING rect. This geometry is UNCHANGED from before and is what keeps both
+        // prior hover bugs fixed:
+        //  • COLLAPSED → the small notch-sized rect at the top center (NOT the whole
+        //    window). Entering the real notch fires `mouseEntered`; the cursor anywhere else
+        //    over the big transparent window does NOT expand (phantom-expand fix). The rect
+        //    stays here EVEN THOUGH collapsed now paints nothing — hover is decoupled from
+        //    drawing.
+        //  • EXPANDED → the shape is pushed DOWN by `notchInset`, so the tracked region
+        //    spans notchInset + expandedSize.height, letting the cursor travel from the
+        //    notch onto the transport buttons without leaving the region (move-to-buttons
+        //    fix).
+        hosting.trackingRectProvider = { [weak viewModel, weak hosting] in
+            guard let viewModel, let hosting else { return nil }
+            if viewModel.isExpanded {
+                return Self.topCenteredRect(
+                    width: viewModel.expandedSize.width,
+                    height: viewModel.notchInset + viewModel.expandedSize.height,
+                    in: hosting
+                )
+            } else {
+                return Self.topCenteredRect(
+                    width: viewModel.collapsedSize.width,
+                    height: viewModel.collapsedSize.height,
+                    in: hosting
+                )
+            }
+        }
+
+        // CLICK HIT-TEST rect — independent of the tracking rect above.
+        //  • COLLAPSED → `.zero` (empty). The overlay paints nothing, so clicks over the
+        //    invisible notch region pass straight through (`hitTest` returns `nil`). Hover
+        //    still works because it uses `trackingRectProvider`, not this.
+        //  • EXPANDED → the full dropped panel, so clicks hit the transport buttons.
         hosting.interactiveRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
-            let full = hosting.bounds
-            // Interactive width/height of the currently-painted content.
-            //  • Collapsed: just the small shape over the notch.
-            //  • Expanded: the shape is pushed DOWN by `notchInset`, so the interactive
-            //    region must span from the top (the notch) all the way through the dropped
-            //    panel — i.e. notchInset + expandedSize.height — so the cursor can travel
-            //    from the notch onto the transport buttons without leaving the region.
-            let width: CGFloat
-            let height: CGFloat
-            if viewModel.isExpanded {
-                width = min(viewModel.expandedSize.width, full.width)
-                height = min(viewModel.notchInset + viewModel.expandedSize.height, full.height)
-            } else {
-                width = min(viewModel.collapsedSize.width, full.width)
-                height = min(viewModel.collapsedSize.height, full.height)
+            guard viewModel.isExpanded else {
+                return .zero // collapsed paints nothing → swallow no clicks (pass through)
             }
-            let x = full.midX - width / 2
-            // The content is drawn top-anchored. The on-screen TOP edge is `maxY` in a
-            // non-flipped view and `minY` in a flipped one, so pick the right edge based on
-            // `isFlipped` to stay correct regardless of NSHostingView's flip convention.
-            let y = hosting.isFlipped ? full.minY : full.maxY - height
-            return CGRect(x: x, y: y, width: width, height: height)
+            return Self.topCenteredRect(
+                width: viewModel.expandedSize.width,
+                height: viewModel.notchInset + viewModel.expandedSize.height,
+                in: hosting
+            )
         }
 
         // Rebuild the hover tracking area whenever the panel toggles between collapsed and
@@ -129,6 +153,22 @@ final class NotchWindowController: NSWindowController {
     }
 
     // MARK: - Geometry
+
+    /// The top-centered rect, in the hosting view's coordinate space, that spans the given
+    /// on-screen `width` × `height`. The hosting view is NOT flipped (AppKit default origin
+    /// bottom-left) while the SwiftUI content is drawn top-anchored, so the rect hugs the
+    /// TOP edge; we pick `maxY`/`minY` by `isFlipped` to stay correct regardless of
+    /// NSHostingView's flip convention. Shared by the tracking- and hit-test-rect providers.
+    private static func topCenteredRect(width: CGFloat,
+                                        height: CGFloat,
+                                        in hosting: NotchHostingView) -> CGRect {
+        let full = hosting.bounds
+        let w = min(width, full.width)
+        let h = min(height, full.height)
+        let x = full.midX - w / 2
+        let y = hosting.isFlipped ? full.minY : full.maxY - h
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
 
     /// Finds the screen with a hardware notch, or falls back to the main screen.
     private func notchScreen() -> NSScreen? {
