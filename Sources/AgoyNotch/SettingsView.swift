@@ -26,6 +26,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             hoverSection
+            musicActivitySection
             timingSection
             appearanceSection
             positionSection
@@ -93,19 +94,28 @@ struct SettingsView: View {
                     settings.hoverHeight = 0
                 }
             }
-            SliderRow(
-                title: "Vertical offset",
-                value: $settings.hoverVerticalOffset,
-                range: AppSettings.Range.hoverVerticalOffset,
-                step: 1,
-                format: "%.0f pt"
-            )
+            Toggle("Show hover zone", isOn: $settings.showHoverZone)
         } header: {
             Text("Hover area")
         } footer: {
             Text("The invisible zone over your real notch that opens the panel. "
-                 + "Vertical offset moves only this zone down; the panel always starts at the top of the screen. "
-                 + "While you adjust these, the zone is outlined on screen for a moment.")
+                 + "It always includes the very top edge of the screen and reaches down by Height. "
+                 + "Turn on Show hover zone to keep it outlined; it also flashes while you drag. "
+                 + "Parts hidden behind the physical notch can't be drawn. "
+                 + "A zone wider than the notch also opens the panel from menu-bar items beside it.")
+        }
+    }
+
+    private var musicActivitySection: some View {
+        Section {
+            Toggle("Show music activity beside the notch", isOn: $settings.showMusicActivity)
+            ColorPicker("Equalizer colour", selection: $settings.equalizerColor, supportsOpacity: true)
+        } header: {
+            Text("Music activity")
+        } footer: {
+            Text("While Apple Music is playing and the panel is closed, a small black pill beside the notch "
+                 + "shows the artwork and a moving equalizer. Hovering it opens the panel. "
+                 + "Paused or nothing playing = nothing is shown.")
         }
     }
 

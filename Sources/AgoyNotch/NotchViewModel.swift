@@ -41,27 +41,52 @@ final class NotchViewModel: ObservableObject {
     /// includes the band that covers the hardware notch.
     var panelSize: CGSize { CGSize(width: settings.panelWidth, height: settings.panelHeight) }
 
-    /// The EXPANDED NSWindow size: big enough for both the panel and the (possibly offset)
-    /// hover zone, so the expanded tracking area always covers the whole panel. The window
+    /// The EXPANDED NSWindow size: big enough for the panel, the hover zone (both start at
+    /// the screen top) and — when the music activity is enabled — the pill, so neither the
+    /// expanded tracking area nor the panel → pill collapse morph is ever clipped. The window
     /// grows to this just before opening and shrinks back to `collapsedWindowSize` after
     /// the close animation (see NotchWindowController).
     var windowSize: CGSize {
         let panel = panelSize
         let hover = hoverSize
-        return CGSize(
-            width: max(panel.width, hover.width),
-            height: max(panel.height, hover.height + CGFloat(settings.hoverVerticalOffset))
-        )
+        var size = CGSize(width: max(panel.width, hover.width), height: max(panel.height, hover.height))
+        if settings.showMusicActivity {
+            let pill = musicActivitySize
+            size.width = max(size.width, pill.width)
+            size.height = max(size.height, pill.height)
+        }
+        return size
     }
 
-    /// The COLLAPSED NSWindow size: exactly the hover zone (plus its vertical offset from the
-    /// screen top), so the hover-zone preview outline fits. While collapsed the window also
-    /// ignores mouse events entirely (see NotchWindowController), so it never swallows
-    /// clicks on menu-bar items beside the notch.
+    /// The COLLAPSED NSWindow size: at least the hover zone, so the hover-zone outline fits.
+    /// When the music activity is enabled it is ALWAYS `max(hover, pill)` per dimension,
+    /// whether or not music is playing right now: the window is transparent and ignores
+    /// mouse events while collapsed (see NotchWindowController), so the extra size costs
+    /// nothing, and this avoids resizing the window on every play/pause or clipping the
+    /// pill's fade-out. With the toggle off it is exactly the hover zone.
     var collapsedWindowSize: CGSize {
         let hover = hoverSize
-        return CGSize(width: hover.width, height: hover.height + CGFloat(settings.hoverVerticalOffset))
+        guard settings.showMusicActivity else { return hover }
+        let pill = musicActivitySize
+        return CGSize(width: max(hover.width, pill.width), height: max(hover.height, pill.height))
     }
+
+    // MARK: - Music activity pill (collapsed, Apple Music playing)
+
+    /// Extra width of each pill wing beyond the notch height (tunable).
+    static let musicWingExtra: CGFloat = 8
+
+    /// Width of each wing beside the notch (artwork on the left, equalizer on the right).
+    var musicWingWidth: CGFloat { notchSize.height + Self.musicWingExtra }
+
+    /// The collapsed pill: the notch plus a wing on each side, exactly the notch's height.
+    var musicActivitySize: CGSize {
+        CGSize(width: notchSize.width + 2 * musicWingWidth, height: notchSize.height)
+    }
+
+    /// Whether the pill is on (enabled in Settings AND Apple Music is playing). The view
+    /// additionally hides it while expanded.
+    var showsMusicActivity: Bool { settings.showMusicActivity && nowPlaying.info.isPlaying }
 
     /// Top padding for the panel CONTENT (inside the black shape) so album art, text,
     /// buttons and the clock sit just below the camera cutout instead of behind it.
@@ -132,7 +157,13 @@ final class NotchViewModel: ObservableObject {
     ///
     /// Because it is level-triggered, a delayed open/close whose re-check fails just leaves
     /// `pending* == nil`, and the next call re-arms it — the state can never get stuck.
+    ///
+    /// Ignored while `expansionWillChange` runs: growing the window there triggers a nested
+    /// positionWindow → refreshTracking → evaluateHover while `isExpanded` still has the OLD
+    /// value. A delayed open clears `pendingOpen` before calling `setExpanded`, so without
+    /// this guard that nested call would schedule a second, redundant pending open.
     func updateHover(isInside: Bool) {
+        guard !isChangingExpansion else { return }
         if isInside {
             pendingClose?.cancel()
             pendingClose = nil

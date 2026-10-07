@@ -8,10 +8,11 @@
 //
 //  Hover: decided HERE, in SCREEN coordinates, by comparing `NSEvent.mouseLocation` with
 //  a hover zone computed from `screen.frame` and Settings (Width × Height, centred on the
-//  notch plus the horizontal offset, anchored at the screen top minus the vertical
-//  offset). It never depends on the window bounds, event locations or tracking-area
-//  rebuilds. The containment test is inclusive and the zone reaches 2 pt above the screen
-//  top, so a cursor pinned to the very top row counts as inside. Evaluation is
+//  notch plus the horizontal offset). The zone ALWAYS starts at the very top of the screen
+//  (reaching `topSlop` above it) and extends DOWN by Height; no setting can move its top,
+//  so a cursor pinned to the very top row is always inside. While the music activity pill
+//  is visible, the pill's area counts as hover too. It never depends on the window bounds,
+//  event locations or tracking-area rebuilds. The containment test is inclusive. Evaluation is
 //  LEVEL-triggered (NotchViewModel.updateHover is idempotent) and runs on every mouse move
 //  (global + local monitors), on a poll (safety net for a stationary cursor), on
 //  tracking-area enter/exit (fast path while expanded), on expand/collapse, geometry
@@ -21,8 +22,9 @@
 //  clicks on menu-bar items beside the notch; mouse events are turned on just before the
 //  panel expands (so the buttons work) and off again as soon as it starts to collapse.
 //
-//  Window size: while COLLAPSED the window is the hover-zone size (room for the hover-zone
-//  preview outline). Just before the panel opens it grows to the expanded size; after the
+//  Window size: while COLLAPSED the window is the hover-zone size, or max(hover zone, music
+//  pill) when the music activity is enabled (room for the hover-zone outline and the pill;
+//  it does not change on play/pause). Just before the panel opens it grows to the expanded size; after the
 //  close animation it shrinks back. The grow-out-of-the-notch morph itself is pure SwiftUI
 //  inside the window (see NotchView).
 //
@@ -52,7 +54,7 @@ final class NotchWindowController: NSWindowController {
 
     /// How far the hover zone reaches ABOVE the screen top. `NSEvent.mouseLocation.y` can be
     /// exactly `screen.frame.maxY` on the top row, so the zone must include that edge.
-    private static let topSlop: CGFloat = 2
+    private static let topSlop: CGFloat = 3
 
     /// Observer tokens. `nonisolated(unsafe)` because the nonisolated `deinit` reads them;
     /// they are written once in `init` and only read again in `deinit`, so there is no race.
@@ -112,16 +114,16 @@ final class NotchWindowController: NSWindowController {
 
         // Tracking-area rect (fast path only; it fires while the window accepts mouse
         // events, i.e. while expanded):
-        //  • COLLAPSED → only the hover zone over the notch (Settings → Hover area).
-        //  • EXPANDED  → the whole panel (plus the hover zone, in case it is offset below
-        //    the panel), so moving onto the transport buttons is noticed immediately.
+        //  • COLLAPSED → the hover zone over the notch (Settings → Hover area), plus the
+        //    music pill while it is visible.
+        //  • EXPANDED  → the whole panel (plus the hover zone, in case it is wider than the
+        //    panel), so moving onto the transport buttons is noticed immediately.
         hosting.trackingRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
-            let hoverRect = Self.topCenteredRect(
-                viewModel.hoverSize,
-                topInset: CGFloat(viewModel.settings.hoverVerticalOffset),
-                in: hosting
-            )
+            var hoverRect = Self.topCenteredRect(viewModel.hoverSize, in: hosting)
+            if viewModel.showsMusicActivity {
+                hoverRect = hoverRect.union(Self.topCenteredRect(viewModel.musicActivitySize, in: hosting))
+            }
             guard viewModel.isExpanded else { return hoverRect }
             return Self.topCenteredRect(viewModel.panelSize, in: hosting).union(hoverRect)
         }
@@ -152,7 +154,8 @@ final class NotchWindowController: NSWindowController {
         let geometryChanges: [AnyPublisher<Void, Never>] = [
             settings.$hoverWidth.map { _ in () }.eraseToAnyPublisher(),
             settings.$hoverHeight.map { _ in () }.eraseToAnyPublisher(),
-            settings.$hoverVerticalOffset.map { _ in () }.eraseToAnyPublisher(),
+            // Changes collapsedWindowSize (max(hover, pill) vs. hover only).
+            settings.$showMusicActivity.map { _ in () }.eraseToAnyPublisher(),
             settings.$horizontalOffset.map { _ in () }.eraseToAnyPublisher(),
             settings.$panelWidth.map { _ in () }.eraseToAnyPublisher(),
             settings.$panelHeight.map { _ in () }.eraseToAnyPublisher(),
@@ -175,7 +178,6 @@ final class NotchWindowController: NSWindowController {
         let hoverZoneChanges: [AnyPublisher<Void, Never>] = [
             settings.$hoverWidth.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             settings.$hoverHeight.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            settings.$hoverVerticalOffset.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             settings.$horizontalOffset.dropFirst().map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(hoverZoneChanges)
@@ -244,18 +246,16 @@ final class NotchWindowController: NSWindowController {
 
     // MARK: - Geometry
 
-    /// A `size` rect, horizontally centered and hugging the TOP edge of the hosting view
-    /// (optionally `topInset` points below it), in the hosting view's coordinates. Handles
-    /// both flipped and non-flipped hosting views. Used only for the tracking area (fast
-    /// path) and the click rect — hover itself is decided in screen space.
-    private static func topCenteredRect(_ size: CGSize,
-                                        topInset: CGFloat = 0,
-                                        in hosting: NotchHostingView) -> CGRect {
+    /// A `size` rect, horizontally centered and hugging the TOP edge of the hosting view,
+    /// in the hosting view's coordinates. Handles both flipped and non-flipped hosting
+    /// views. Used only for the tracking area (fast path) and the click rect — hover itself
+    /// is decided in screen space.
+    private static func topCenteredRect(_ size: CGSize, in hosting: NotchHostingView) -> CGRect {
         let full = hosting.bounds
         let w = min(size.width, full.width)
         let h = min(size.height, full.height)
         let x = full.midX - w / 2
-        let y = hosting.isFlipped ? full.minY + topInset : full.maxY - topInset - h
+        let y = hosting.isFlipped ? full.minY : full.maxY - h
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
@@ -282,20 +282,36 @@ final class NotchWindowController: NSWindowController {
         screenFrame ?? notchScreen()?.frame
     }
 
-    /// The collapsed hover zone in SCREEN coordinates: exactly Settings Width × Height,
-    /// centred on the notch (`screen.midX + horizontalOffset`), its top at the screen top
-    /// minus the vertical offset. With no vertical offset it reaches `topSlop` above the
-    /// screen top, so the very top row is inside.
-    func hoverZoneOnScreen() -> CGRect? {
+    /// The configured hover zone in SCREEN coordinates: exactly Settings Width × Height,
+    /// centred on the notch (`screen.midX + horizontalOffset`). Its top is ALWAYS the very
+    /// top of the screen plus `topSlop` — whatever the settings — and it extends DOWN by
+    /// Height, so a cursor resting on the top row (`mouseLocation.y == sf.maxY`) is inside.
+    private func configuredHoverZoneOnScreen() -> CGRect? {
         guard let sf = currentScreenFrame() else { return nil }
         let s = viewModel.hoverSize
         let cx = sf.midX + CGFloat(settings.horizontalOffset)
-        let top = sf.maxY - CGFloat(settings.hoverVerticalOffset)
-        var rect = CGRect(x: cx - s.width / 2, y: top - s.height, width: s.width, height: s.height)
-        if settings.hoverVerticalOffset <= 0 {
-            rect.size.height += Self.topSlop
-        }
-        return rect
+        return CGRect(x: cx - s.width / 2, y: sf.maxY - s.height,
+                      width: s.width, height: s.height + Self.topSlop)
+    }
+
+    /// The visible music activity pill in SCREEN coordinates (plus `topSlop` above the
+    /// screen top), or nil while it is not shown (disabled, or Apple Music not playing).
+    private func musicActivityZoneOnScreen() -> CGRect? {
+        guard viewModel.showsMusicActivity, let sf = currentScreenFrame() else { return nil }
+        let s = viewModel.musicActivitySize
+        let cx = sf.midX + CGFloat(settings.horizontalOffset)
+        return CGRect(x: cx - s.width / 2, y: sf.maxY - s.height,
+                      width: s.width, height: s.height + Self.topSlop)
+    }
+
+    /// The COLLAPSED hover zone: the configured zone, united with the music pill while the
+    /// pill is visible. Design choice: hovering the pill (artwork or equalizer) opens the
+    /// panel, as in NotchNook. Trade-off: while music plays, menu-bar items under a wing
+    /// (≈ notch height + 8 pt each side) also open the panel.
+    func hoverZoneOnScreen() -> CGRect? {
+        guard let configured = configuredHoverZoneOnScreen() else { return nil }
+        guard let pill = musicActivityZoneOnScreen() else { return configured }
+        return configured.union(pill)
     }
 
     /// The EXPANDED zone in SCREEN coordinates: the whole panel (from `topSlop` above the
@@ -367,6 +383,8 @@ final class NotchWindowController: NSWindowController {
         guard let screenFrame = screen?.frame else {
             window.setContentSize(size)
             hostingView.refreshTracking()
+            // Re-evaluate on this path too, so a Width/Height change always takes effect.
+            evaluateHover()
             return
         }
 

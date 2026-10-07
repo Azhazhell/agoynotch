@@ -14,8 +14,11 @@
 //
 //  Morph: the shape's frame animates from the notch size to the panel size, anchored
 //  top-center, using the spring from Settings → Animation duration (0 = instant). The
-//  collapsed end state is fully invisible (opacity 0, no hit-testing), so when idle the
-//  user sees only the real notch. The NSWindow is only the hover-zone size while collapsed;
+//  collapsed end state is fully invisible (opacity 0, no hit-testing) unless Apple Music is
+//  playing: then it is the music activity pill, a black shape exactly the notch's height
+//  fused with the notch, with artwork on the left wing and an equalizer on the right (see
+//  MusicActivityView.swift). The morph grows from the pill when it is showing, else from
+//  the bare notch. The NSWindow is only the hover-zone (or pill) size while collapsed;
 //  the controller grows it to the panel size just before opening (before this morph starts)
 //  and shrinks it after the close animation, so the morph always runs in the large window.
 //
@@ -37,8 +40,10 @@ struct NotchView: View {
 
     var body: some View {
         let expanded = viewModel.isExpanded
+        // Collapsed + enabled + Apple Music playing → the pill beside the notch.
+        let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
-        let size = expanded ? panelSize : viewModel.notchSize
+        let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
         let bottomRadius = expanded ? expandedBottomRadius : collapsedBottomRadius
         let shape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
@@ -57,35 +62,57 @@ struct NotchView: View {
             // the clip below reveals it as the shape grows.
             .frame(width: panelSize.width, height: panelSize.height, alignment: .top)
             .opacity(expanded ? 1 : 0)
-            // The black shape: notch-sized when collapsed, panel-sized when expanded,
-            // top-anchored so it grows down/out of the notch.
+            // The pill's wings, top-centred on the panel-sized frame, so after the `size`
+            // frame + clip below they sit exactly beside the notch. Hidden while expanded.
+            .overlay(alignment: .top) {
+                MusicActivityWings(
+                    info: info,
+                    notchSize: viewModel.notchSize,
+                    wingWidth: viewModel.musicWingWidth,
+                    equalizerColor: viewModel.settings.equalizerColor,
+                    isAnimating: pill
+                )
+                .opacity(pill ? 1 : 0)
+            }
+            // The black shape: notch- or pill-sized when collapsed, panel-sized when
+            // expanded, top-anchored so it grows down/out of the notch.
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(Color.black)
             .clipShape(shape)
-            // Collapsed end state = fully invisible; hover is detected from the cursor
-            // position in screen space (NotchWindowController), not by anything drawn here.
-            .opacity(expanded ? 1 : 0)
+            // Collapsed end state = fully invisible unless the music pill is showing; hover
+            // is detected from the cursor position in screen space (NotchWindowController),
+            // not by anything drawn here.
+            .opacity(expanded || pill ? 1 : 0)
             .allowsHitTesting(expanded)
             // Pin to the window's top-center: the shape's top edge is y = 0 = screen top.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Brief outline of the hover zone while its Settings are being adjusted.
+            // Outline of the hover zone: briefly while its Settings are being adjusted, and
+            // permanently while collapsed if Settings → Show hover zone is on.
             .overlay(alignment: .top) {
                 hoverZonePreview
-                    .animation(.easeOut(duration: 0.2), value: viewModel.showsHoverZonePreview)
+                    .animation(.easeOut(duration: 0.2), value: showsHoverZoneOutline)
             }
             // Full-bleed overlay: never let a reported safe area push the shape down.
             .ignoresSafeArea()
             .animation(viewModel.settings.animation, value: expanded)
+            .animation(viewModel.settings.animation, value: pill)
     }
 
     // MARK: - Hover-zone preview
 
-    /// The hover zone, outlined for a moment after a Hover-area / Horizontal-offset change.
-    /// The window is centred on the zone's centre and top-anchored at the screen top, so
-    /// this sits exactly on the screen-space hover zone. Purely visual: no hit-testing.
+    /// Whether the hover-zone outline is drawn: for a moment after a Hover-area /
+    /// Horizontal-offset change, or always while collapsed with Show hover zone on. Drawing
+    /// works even though the collapsed window ignores mouse events.
+    private var showsHoverZoneOutline: Bool {
+        viewModel.showsHoverZonePreview || (viewModel.settings.showHoverZone && !viewModel.isExpanded)
+    }
+
+    /// The configured hover zone (Width × Height), outlined. The window is centred on the
+    /// zone's centre and top-anchored at the screen top, so this sits exactly on the
+    /// screen-space zone; parts behind the physical notch can't be seen. Purely visual.
     @ViewBuilder
     private var hoverZonePreview: some View {
-        if viewModel.showsHoverZonePreview {
+        if showsHoverZoneOutline {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.accentColor.opacity(0.30))
                 .overlay(
@@ -93,7 +120,6 @@ struct NotchView: View {
                         .strokeBorder(Color.accentColor, lineWidth: 1.5)
                 )
                 .frame(width: viewModel.hoverSize.width, height: viewModel.hoverSize.height)
-                .padding(.top, CGFloat(viewModel.settings.hoverVerticalOffset))
                 .allowsHitTesting(false)
                 .transition(.opacity)
         }
@@ -230,7 +256,7 @@ struct NotchView: View {
 /// IMPORTANT: this is an SF Symbol STAND-IN (`music.note`) placed inside a small red/pink
 /// rounded tile to EVOKE the Apple Music icon — it is deliberately NOT Apple's trademarked
 /// Apple Music logo asset, which we must not ship.
-private struct AppleMusicGlyph: View {
+struct AppleMusicGlyph: View {
     var size: CGFloat
 
     var body: some View {

@@ -2,7 +2,7 @@
 
 Turn your MacBook's hardware camera notch into a Dynamic Island–style interactive surface.
 
-When idle AgoyNotch draws **nothing** — you see only your real notch. Move the cursor onto
+When idle AgoyNotch draws **nothing** (unless music is playing) — you see only your real notch. Move the cursor onto
 the notch and a black panel grows out of it with a spring animation: one continuous black
 shape whose top edge is the very top of the screen (it covers the notch and the menu-bar
 strip beside it), with the content laid out just below the camera cutout. The panel shows
@@ -67,9 +67,11 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Setting | Range (default) | What it does |
 |---|---|---|
 | Hover area → Width | 80–400 pt (your notch width) | Width of the invisible zone that opens the panel, centred on the notch. Applied live while dragging; the zone is outlined on screen for a moment so you can see it. |
-| Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the top of the screen. Applied live, with the same outline. |
+| Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the very top of the screen (the top edge is always included). Applied live, with the same outline. |
 | Match notch | — | Resets width/height to the detected notch size (shown above the button). |
-| Hover area → Vertical offset | 0–40 pt (0) | Moves only the hover zone down. The panel always starts at the top of the screen. Any offset above 0 leaves the very top edge (that many points) inert. |
+| Hover area → Show hover zone | off | Keeps the hover zone outlined on screen while the panel is closed. Parts that overlap the physical notch are hidden behind it. |
+| Music activity → Show music activity beside the notch | on | While Apple Music plays and the panel is closed, shows the black pill beside the notch (see below). |
+| Music activity → Equalizer colour | white | Colour of the pill's equalizer bars. |
 | Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
 | Close delay | 0–2 s, step 0.05 (0.35) | How long after the cursor leaves the panel before it closes. 0 = instant. Coming back earlier keeps it open. |
 | Animation duration | 0–1 s (0.35) | Speed of the grow/shrink spring. 0 = no animation. |
@@ -82,16 +84,32 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Clock & Calendar → Weekday letters | white 50 % | The letters above the week strip. |
 | Clock & Calendar → Today highlight / Today number | white / black | The circle behind today's date and the number on it. |
 | Reset colours | — | Restores only the six colours. A live preview sits at the top of the section. |
-| Reset to defaults | — | Restores every value above, colours included (except launch at login). |
+| Reset to defaults | — | Restores every value above, colours, Show hover zone and the music activity settings included (except launch at login). |
 
 While collapsed only the hover zone reacts to the cursor; once open, the whole panel does,
-so you can move down to the transport buttons without it closing. While collapsed the overlay
-ignores the mouse entirely (clicks reach the menu bar); hover is detected from the cursor
-position in screen coordinates (inclusive of the very top row of the screen), re-checked on
+so you can move down to the transport buttons without it closing. The hover zone **always
+includes the very top edge of the screen** and reaches down by Height; no setting can move
+it away from the top. While the music activity pill is visible, the pill's area counts as
+hover too, so hovering the artwork or equalizer opens the panel (trade-off: while music
+plays, menu-bar items under the pill's wings open it as well; a zone wider than the notch
+does the same). While collapsed the overlay ignores the mouse entirely (clicks reach the
+menu bar); hover is detected from the cursor position in screen coordinates, re-checked on
 every mouse move and on a short poll, so a cursor resting inside the notch opens the panel
-without having to wiggle it.
+after the open delay without having to wiggle it. A hover *vertical offset* stored by older
+builds is discarded on launch.
 
 The Settings window can be resized, minimized and zoomed.
+
+## Music activity (collapsed)
+
+While the panel is closed and **Apple Music is playing**, AgoyNotch shows a compact black
+pill fused with the hardware notch: exactly the notch's height, flush with the top of the
+screen, with a wing on each side. The left wing shows the album artwork (or, without
+artwork, an SF Symbol `music.note` on a red/pink tile — a stand-in, not Apple's Music logo);
+the right wing shows four animated equalizer bars (Settings → Equalizer colour). The bars
+only animate while the pill is visible. Paused or nothing playing: nothing is drawn, as
+before. Opening the panel grows it out of the pill. Turn it off with *Show music activity
+beside the notch*.
 
 ## Live clock & calendar
 
@@ -214,6 +232,7 @@ AgoyNotch/
     NotchWindowController.swift       notch measurement, placement, screen-space hover, click-through
     NotchViewModel.swift              expand/collapse state, open/close delays, derived sizes
     NotchView.swift                   SwiftUI black panel growing out of the notch (Now Playing + clock)
+    MusicActivityView.swift           collapsed music pill: artwork wing + animated equalizer
     ClockCalendarView.swift           right column: live ticking clock + compact calendar
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
