@@ -46,13 +46,46 @@ final class NotchHostingView: NSHostingView<NotchView> {
     // "Hangs below the notch" fix (PRIME ROOT CAUSE): on a notched Mac the window's top
     // edge sits at the physical top of the display, so this hosting view's safe area
     // includes the hardware notch at the top. By default NSHostingView insets its SwiftUI
-    // content by that safe area, pushing the top-anchored collapsed pill DOWN by exactly
-    // the notch height — which is why the black overlay appeared *below* the real notch in
-    // the menu-bar strip instead of fused with it. Returning zero insets here stops AppKit
-    // from reserving the notch region, so the SwiftUI content's top edge == this view's top
-    // edge == the window top == the physical screen top. (`NotchView` also applies
-    // `.ignoresSafeArea()` as a belt-and-suspenders on the SwiftUI side.)
+    // content by that safe area, pushing the top-anchored collapsed pill / expanded panel
+    // DOWN by exactly the notch height — which is why the black overlay appeared *below*
+    // the real notch (a separate box with a gap at the top) instead of fused with it.
+    //
+    // There are TWO layers that must be defeated for the gap to close:
+    //
+    //  1. The AppKit NSView safe-area insets. Returning zero here stops AppKit from
+    //     reporting the notch as a safe-area inset, so the SwiftUI content's top edge ==
+    //     this view's top edge == the window top == the physical screen top.
     override var safeAreaInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
+    //  2. NSHostingView's OWN safe-area handling. On macOS 13.3+ the hosting view decides
+    //     which safe-area regions to apply to its SwiftUI content via `safeAreaRegions`.
+    //     Overriding the NSView `safeAreaInsets` above is NOT always enough — the prior
+    //     attempt kept that override AND `.ignoresSafeArea()` on the root yet the gap
+    //     persisted, because the hosting view was still reserving the container's safe-area
+    //     region (the notch). Clearing `safeAreaRegions` to an empty set tells the hosting
+    //     view to apply NO safe-area regions at all, so the SwiftUI content is laid out
+    //     edge-to-edge from the physical top. `sizingOptions` is left at its default (we do
+    //     NOT want the hosting view to resize the window — the window is a fixed expanded
+    //     size by design).
+    //
+    // Both are set in `init` because they are stored configuration, not overrides. The
+    // tracking-area / hitTest logic below is untouched.
+    //
+    // `NSHostingView.init(rootView:)` is a `required` designated initializer, so the
+    // override is written with `required` (not `override`) per Swift's initializer rules.
+    required init(rootView: NotchView) {
+        super.init(rootView: rootView)
+        // macOS 13.3+. The deployment target is macOS 15, so this is always available, but
+        // guard anyway to stay robust if the target is ever lowered.
+        if #available(macOS 13.3, *) {
+            safeAreaRegions = []
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

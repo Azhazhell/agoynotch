@@ -52,12 +52,13 @@ struct NotchView: View {
         // notch with NO gap above it.
         container
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Safe-area fix: ignore the safe area so SwiftUI does NOT inset this content
-            // below the hardware notch / menu bar. Combined with the hosting view returning
-            // zero `safeAreaInsets` (see NotchHostingView), this guarantees the panel's top
-            // edge sits at the physical top of the display and fuses with the real notch
-            // instead of hanging below it.
-            .ignoresSafeArea(.all)
+            // Safe-area fix: ignore the safe area on ALL edges so SwiftUI does NOT inset
+            // this content below the hardware notch / menu bar. Combined with the hosting
+            // view returning zero `safeAreaInsets` AND clearing its `safeAreaRegions` (see
+            // NotchHostingView), this guarantees the panel's top edge sits at the physical
+            // top of the display and fuses with the real notch instead of hanging below it.
+            // The hosting-view changes are the real fix; this is the belt-and-suspenders.
+            .ignoresSafeArea(.all, edges: .all)
             // Spring morph between collapsed and expanded, like Dynamic Island. The window
             // never resizes — only this SwiftUI content grows/shrinks. The scale is anchored
             // at the TOP so the panel appears to grow DOWN/OUT of the notch and collapse
