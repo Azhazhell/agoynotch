@@ -1,6 +1,9 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 // The tools-version comment above MUST be the very first line of the manifest.
-// swift-tools-version:5.9 ships with Xcode 15+ and remains valid on the macOS 27 SDK / Xcode 27.
+// tools-version 6.0 ships with Xcode 16+ and is valid on Xcode 27 / the macOS 27 SDK.
+// It is required so that the `.macOS(.v15)` platform enum below is recognized —
+// older tools-versions (e.g. 5.9) report "'v15' is unavailable" because that enum
+// case did not exist yet in their PackageDescription.
 
 import PackageDescription
 
