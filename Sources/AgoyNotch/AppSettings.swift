@@ -49,7 +49,10 @@ final class AppSettings: ObservableObject {
         static let hoverWidth: ClosedRange<Double> = 80...400
         static let hoverHeight: ClosedRange<Double> = 10...80
         static let hoverVerticalOffset: ClosedRange<Double> = 0...40
-        static let horizontalOffset: ClosedRange<Double> = -150...150
+        // Kept to ±60 pt: the hover zone (~186 pt wide, half ≈ 93) must still overlap the
+        // hardware notch, and the narrowest panel (480 pt, half 240) must still cover it.
+        // At ±150 the hover zone slid off the notch and a sliver of the real notch showed.
+        static let horizontalOffset: ClosedRange<Double> = -60...60
         static let panelWidth: ClosedRange<Double> = 480...800
         static let panelHeight: ClosedRange<Double> = 180...320
         static let delay: ClosedRange<Double> = 0...2

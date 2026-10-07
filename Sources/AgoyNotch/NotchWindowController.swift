@@ -78,7 +78,11 @@ final class NotchWindowController: NSWindowController {
 
         // Swap the tracked rect between hover zone and panel on every expand/collapse.
         viewModel.$isExpanded
-            .receive(on: RunLoop.main)
+            // DispatchQueue.main (not RunLoop.main): RunLoop.main only delivers in the default
+            // run-loop mode, so changes made while dragging a Settings slider would wait until
+            // mouse-up. DispatchQueue.main also delivers during event tracking, so the window
+            // and hover zone update live while dragging.
+            .receive(on: DispatchQueue.main)
             .sink { [weak hosting] _ in
                 hosting?.refreshTracking()
             }
@@ -98,7 +102,11 @@ final class NotchWindowController: NSWindowController {
         // (Each @Published also replays its current value on subscribe; that just triggers
         // one harmless extra positionWindow() right after launch.)
         Publishers.MergeMany(geometryChanges)
-            .receive(on: RunLoop.main)
+            // DispatchQueue.main (not RunLoop.main): RunLoop.main only delivers in the default
+            // run-loop mode, so changes made while dragging a Settings slider would wait until
+            // mouse-up. DispatchQueue.main also delivers during event tracking, so the window
+            // and hover zone update live while dragging.
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.positionWindow()
             }
