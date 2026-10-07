@@ -2,11 +2,17 @@
 //  NotchWindowController.swift
 //  AgoyNotch
 //
-//  Measures the hardware notch and places the fixed-size overlay window so its TOP edge is
-//  the physical top of the screen (`screen.frame.maxY`), centered on the notch. Repositions
-//  live when a geometry setting changes or the display configuration changes. The window
-//  never resizes on expand/collapse — the grow-out-of-the-notch morph is pure SwiftUI
-//  inside the window (see NotchView).
+//  Measures the hardware notch and places the overlay window so its TOP edge is the
+//  physical top of the screen (`screen.frame.maxY`), centered on the notch. Repositions
+//  live when a geometry setting changes or the display configuration changes.
+//
+//  Window size: while COLLAPSED the window is exactly the hover zone (it covers only the
+//  hardware notch, so it can never swallow clicks meant for other windows). Just before the
+//  panel opens it grows to the expanded size; after the close animation it shrinks back.
+//  The grow-out-of-the-notch morph itself is pure SwiftUI inside the window (see NotchView).
+//
+//  Visibility: the panel is re-ordered front whenever the app's activation state, the
+//  Space or the screen configuration changes, so it can never be left hidden.
 //
 //  Note on coordinates: AppKit's screen origin is bottom-left, so the TOP edge of a screen
 //  is `frame.maxY` and a top-anchored window's origin.y is `frame.maxY - windowHeight`.
@@ -16,6 +22,7 @@ import AppKit
 import Combine
 import SwiftUI
 
+@MainActor
 final class NotchWindowController: NSWindowController {
 
     private let viewModel: NotchViewModel
@@ -28,9 +35,19 @@ final class NotchWindowController: NSWindowController {
     /// Notch size used on Macs without a hardware notch.
     private static let fallbackNotchSize = CGSize(width: 200, height: 32)
 
-    /// Observer token. `nonisolated(unsafe)` because the nonisolated `deinit` reads it; it is
-    /// written once in `init` and only read again in `deinit`, so there is no race.
-    nonisolated(unsafe) private var screenParamsObserver: NSObjectProtocol?
+    /// Observer tokens. `nonisolated(unsafe)` because the nonisolated `deinit` reads them;
+    /// they are written once in `init` and only read again in `deinit`, so there is no race.
+    nonisolated(unsafe) private var appObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var workspaceObservers: [NSObjectProtocol] = []
+    /// NSWorkspace's centre, captured on the main actor so `deinit` needn't touch NSWorkspace.
+    nonisolated(unsafe) private var workspaceCenter: NotificationCenter?
+
+    /// Whether the window currently has the EXPANDED size (vs. the hover-zone size).
+    private var windowIsExpandedSize = false
+    /// Pending shrink back to the hover-zone size after the close animation.
+    private var pendingShrink: Task<Void, Never>?
+    /// App-lifetime poll that reconciles hover state with the real cursor position.
+    private var hoverPoll: Task<Void, Never>?
 
     init(viewModel: NotchViewModel, settings: AppSettings) {
         self.viewModel = viewModel
@@ -38,12 +55,12 @@ final class NotchWindowController: NSWindowController {
 
         let hosting = NotchHostingView(rootView: NotchView(viewModel: viewModel))
         // The SwiftUI content must never drive the window size: the window is resized only
-        // by `positionWindow()` when a geometry setting changes.
+        // by `positionWindow()` (geometry change, expand, or post-collapse shrink).
         hosting.sizingOptions = []
         self.hostingView = hosting
 
         let panel = NotchWindow(
-            contentRect: NSRect(origin: .zero, size: viewModel.windowSize),
+            contentRect: NSRect(origin: .zero, size: viewModel.collapsedWindowSize),
             hostingView: hosting
         )
 
@@ -52,6 +69,16 @@ final class NotchWindowController: NSWindowController {
         // Forward hover events from the hosting view's tracking area to the view model.
         hosting.onHoverChange = { [weak viewModel] isInside in
             viewModel?.hoverChanged(isInside)
+        }
+
+        // Lets delayed opens/closes re-check the REAL cursor position when they fire.
+        viewModel.pointerInsideProvider = { [weak hosting] in
+            hosting?.pointerIsInTrackedRect() ?? false
+        }
+
+        // Grow the window synchronously before opening; shrink after the close animation.
+        viewModel.expansionWillChange = { [weak self] expanding in
+            self?.expansionWillChange(expanding)
         }
 
         // HOVER rect (see NotchHostingView.trackingRectProvider):
@@ -112,17 +139,44 @@ final class NotchWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
-        // Reposition when the display configuration changes. The observer block is
-        // @Sendable, so hop to the main actor instead of calling positionWindow() directly.
-        screenParamsObserver = NotificationCenter.default.addObserver(
+        // Observer blocks are @Sendable, so each only hops to the main actor.
+        let center = NotificationCenter.default
+        // Reposition (and re-show) when the display configuration changes.
+        appObservers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.positionWindow()
+                self?.ensureVisible()
             }
+        })
+        // Activation changes (Settings opening/closing, clicking other apps) must never leave
+        // the notch panel hidden.
+        for name in [NSApplication.didBecomeActiveNotification,
+                     NSApplication.didResignActiveNotification] {
+            appObservers.append(center.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.ensureVisible()
+                }
+            })
         }
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        self.workspaceCenter = workspaceCenter
+        workspaceObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.ensureVisible()
+            }
+        })
     }
 
     @available(*, unavailable)
@@ -131,8 +185,13 @@ final class NotchWindowController: NSWindowController {
     }
 
     deinit {
-        if let screenParamsObserver {
-            NotificationCenter.default.removeObserver(screenParamsObserver)
+        for token in appObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let workspaceCenter {
+            for token in workspaceObservers {
+                workspaceCenter.removeObserver(token)
+            }
         }
     }
 
@@ -187,8 +246,9 @@ final class NotchWindowController: NSWindowController {
             settings.measuredNotchSize = notch
         }
 
-        // 2. Size (depends on the measured notch through the hover size).
-        let size = viewModel.windowSize
+        // 2. Size (depends on the measured notch through the hover size): the hover zone
+        //    while collapsed, the full panel while expanded (or closing).
+        let size = windowIsExpandedSize ? viewModel.windowSize : viewModel.collapsedWindowSize
         guard let screenFrame = screen?.frame else {
             window.setContentSize(size)
             hostingView.refreshTracking()
@@ -206,15 +266,70 @@ final class NotchWindowController: NSWindowController {
         hostingView.refreshTracking()
 
         #if DEBUG
+        let hoverRect = Self.topCenteredRect(viewModel.hoverSize,
+                                             topInset: CGFloat(settings.hoverVerticalOffset),
+                                             in: hostingView)
+        let hoverOnScreen = window.convertToScreen(hostingView.convert(hoverRect, to: nil))
         print("[AgoyNotch] screen.maxY=\(screenFrame.maxY) window.maxY=\(window.frame.maxY) "
               + "notch=\(notch) safeArea.top=\(screen?.safeAreaInsets.top ?? 0) "
-              + "hosting.safeAreaInsets.top=\(hostingView.safeAreaInsets.top)")
+              + "hosting.safeAreaInsets.top=\(hostingView.safeAreaInsets.top) "
+              + "expandedSize=\(windowIsExpandedSize) frame=\(window.frame) "
+              + "isVisible=\(window.isVisible) hoverOnScreen=\(hoverOnScreen)")
         #endif
     }
 
-    /// Shows the panel and performs the initial placement.
+    /// Grows the window before opening (synchronously, so SwiftUI animates the morph inside
+    /// the already-large window) and shrinks it back once the close animation has finished.
+    private func expansionWillChange(_ expanding: Bool) {
+        pendingShrink?.cancel()
+        pendingShrink = nil
+        if expanding {
+            if !windowIsExpandedSize {
+                windowIsExpandedSize = true
+                positionWindow()
+            }
+            return
+        }
+        // Plain value captured before the Task.
+        let duration = max(settings.animationDuration, 0) + 0.05
+        let nanos = UInt64(duration * 1_000_000_000)
+        pendingShrink = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanos)
+            guard !Task.isCancelled, let self, !self.viewModel.isExpanded else { return }
+            self.pendingShrink = nil
+            self.windowIsExpandedSize = false
+            self.positionWindow()
+        }
+    }
+
+    // MARK: - Visibility
+
+    /// Orders the panel front (it must never stay hidden after an activation, Space or
+    /// screen change) and re-syncs hover with the real cursor position.
+    func ensureVisible() {
+        guard let window else { return }
+        window.orderFrontRegardless()
+        hostingView.reconcileHover()
+        #if DEBUG
+        print("[AgoyNotch] ensureVisible isVisible=\(window.isVisible) frame=\(window.frame) "
+              + "occluded=\(!window.occlusionState.contains(.visible))")
+        #endif
+    }
+
+    /// Shows the panel, performs the initial placement and starts the hover poll.
     func show() {
         positionWindow()
-        window?.orderFrontRegardless()
+        ensureVisible()
+        if hoverPoll == nil {
+            // Safety net against lost enter/exit events. `[weak self]`: the loop ends by
+            // itself if the controller goes away, so deinit never has to touch it.
+            hoverPoll = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard let self else { return }
+                    self.hostingView.reconcileHover()
+                }
+            }
+        }
     }
 }

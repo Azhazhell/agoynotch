@@ -68,7 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         guard let settings else { return }
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController(settings: settings)
+            settingsWindowController = SettingsWindowController(
+                settings: settings,
+                onActivationPolicyChange: { [weak self] in
+                    self?.windowController?.ensureVisible()
+                }
+            )
         }
         settingsWindowController?.present()
     }

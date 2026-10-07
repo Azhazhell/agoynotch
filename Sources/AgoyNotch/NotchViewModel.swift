@@ -41,9 +41,10 @@ final class NotchViewModel: ObservableObject {
     /// includes the band that covers the hardware notch.
     var panelSize: CGSize { CGSize(width: settings.panelWidth, height: settings.panelHeight) }
 
-    /// The fixed NSWindow size: big enough for both the panel and the (possibly offset)
-    /// hover zone. The window never resizes on expand/collapse — only when a geometry
-    /// setting changes — so the expanded tracking area always covers the whole panel.
+    /// The EXPANDED NSWindow size: big enough for both the panel and the (possibly offset)
+    /// hover zone, so the expanded tracking area always covers the whole panel. The window
+    /// grows to this just before opening and shrinks back to `collapsedWindowSize` after
+    /// the close animation (see NotchWindowController).
     var windowSize: CGSize {
         let panel = panelSize
         let hover = hoverSize
@@ -51,6 +52,14 @@ final class NotchViewModel: ObservableObject {
             width: max(panel.width, hover.width),
             height: max(panel.height, hover.height + CGFloat(settings.hoverVerticalOffset))
         )
+    }
+
+    /// The COLLAPSED NSWindow size: exactly the hover zone (plus its vertical offset from the
+    /// screen top). While collapsed the window covers only the hardware notch, so it can
+    /// never swallow clicks meant for other windows (e.g. the Settings title bar).
+    var collapsedWindowSize: CGSize {
+        let hover = hoverSize
+        return CGSize(width: hover.width, height: hover.height + CGFloat(settings.hoverVerticalOffset))
     }
 
     /// Top padding for the panel CONTENT (inside the black shape) so album art, text,
@@ -65,6 +74,15 @@ final class NotchViewModel: ObservableObject {
     private var pendingClose: Task<Void, Never>?
 
     private var cancellables = Set<AnyCancellable>()
+
+    /// Reports whether the cursor is REALLY inside the tracked rect right now. Set by the
+    /// window controller; checked when a delayed open/close fires so a lost exit/enter event
+    /// cannot open or close the panel against the cursor's real position.
+    var pointerInsideProvider: (() -> Bool)?
+
+    /// Called synchronously just before `isExpanded` changes (with the new value), so the
+    /// window controller can grow the window before the open animation starts.
+    var expansionWillChange: ((Bool) -> Void)?
 
     // MARK: - Init
 
@@ -97,7 +115,7 @@ final class NotchViewModel: ObservableObject {
 
             let delay = settings.openDelay
             if delay <= 0 {
-                isExpanded = true
+                setExpanded(true)
                 return
             }
             // Capture the delay as a plain value so the task needs `self` only after the
@@ -107,7 +125,9 @@ final class NotchViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: nanos)
                 guard !Task.isCancelled, let self else { return }
                 self.pendingOpen = nil
-                self.isExpanded = true
+                // The cursor left without a reliable exit event: don't open.
+                guard self.pointerInsideProvider?() ?? true else { return }
+                self.setExpanded(true)
             }
         } else {
             pendingOpen?.cancel()
@@ -118,7 +138,7 @@ final class NotchViewModel: ObservableObject {
             if delay <= 0 {
                 pendingClose?.cancel()
                 pendingClose = nil
-                isExpanded = false
+                setExpanded(false)
                 return
             }
             pendingClose?.cancel()
@@ -127,8 +147,20 @@ final class NotchViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: nanos)
                 guard !Task.isCancelled, let self else { return }
                 self.pendingClose = nil
-                self.isExpanded = false
+                // The cursor is still on the panel (spurious exit): stay open.
+                guard !(self.pointerInsideProvider?() ?? false) else { return }
+                self.setExpanded(false)
             }
         }
+    }
+
+    /// The single place `isExpanded` is written.
+    private func setExpanded(_ value: Bool) {
+        guard isExpanded != value else { return }
+        #if DEBUG
+        print("[AgoyNotch] \(value ? "open" : "close")")
+        #endif
+        expansionWillChange?(value)
+        isExpanded = value
     }
 }

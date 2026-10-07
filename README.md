@@ -69,18 +69,21 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Hover area → Width | 80–400 pt (your notch width) | Width of the invisible zone over the notch that opens the panel. |
 | Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the top of the screen. |
 | Match notch | — | Resets width/height to the detected notch size (shown above the button). |
-| Hover area → Vertical offset | 0–40 pt (0) | Moves only the hover zone down. The panel always starts at the top of the screen. |
+| Hover area → Vertical offset | 0–40 pt (0) | Moves only the hover zone down. The panel always starts at the top of the screen. Any offset above 0 leaves the very top edge (that many points) inert. |
 | Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
 | Close delay | 0–2 s, step 0.05 (0.35) | How long after the cursor leaves the panel before it closes. 0 = instant. Coming back earlier keeps it open. |
 | Animation duration | 0–1 s (0.35) | Speed of the grow/shrink spring. 0 = no animation. |
-| Horizontal offset | −150–150 pt (0) | Shifts the panel and hover zone left/right if they are off-center on your Mac. |
+| Horizontal offset | −60–60 pt (0) | Shifts the panel and hover zone left/right if they are off-center on your Mac. |
 | Panel width / height | 480–800 pt (600) / 180–320 pt (240) | Size of the expanded panel (height includes the band over the notch). |
 | Show this window when AgoyNotch starts | on | Turn off if you use launch at login and don't want the window at every login. |
 | Launch at login | off | Registers AgoyNotch as a login item (`SMAppService`). Only works from the built `.app`; errors are shown inline. |
 | Reset to defaults | — | Restores every value above (except launch at login). |
 
 While collapsed only the hover zone reacts to the cursor; once open, the whole panel does,
-so you can move down to the transport buttons without it closing.
+so you can move down to the transport buttons without it closing. While collapsed the overlay
+is only the size of the hover zone, so it never blocks clicks on other windows.
+
+The Settings window can be resized, minimized and zoomed.
 
 ## Live clock & calendar
 
@@ -113,8 +116,10 @@ the live data source on macOS 27.
 - **Use the built `.app`.** The Automation grant is attached to the bundle identifier
   `com.azhazhell.agoynotch`, and the prompt text comes from `NSAppleEventsUsageDescription`
   in `Resources/Info.plist`. Running the bare executable from Xcode works but the prompt can
-  be flaky there. Because the build script signs ad-hoc, a rebuilt app may be asked again —
-  just allow it (or re-enable it under Automation). If Music isn't running or access is
+  be flaky there. Because the build script signs ad-hoc, each rebuild changes the signature,
+  so macOS will likely ask again after every `--install` — just allow it. If the prompt stops
+  appearing and Now Playing stays empty, reset the grant with
+  `tccutil reset AppleEvents com.azhazhell.agoynotch` and relaunch. If Music isn't running or access is
   denied (error `-1743`), AgoyNotch logs a short message and shows "Nothing playing".
 - **Graceful behavior.** If Music is stopped, not running, or unauthorized, the panel shows
   "Nothing playing" — it never forces Music to launch just to query it.
@@ -133,7 +138,10 @@ now the live source. `MediaRemoteBridge` remains in the tree only to document th
 1. Open `Package.swift` in Xcode, select **My Mac**, press **Run** (⌘R).
 2. Debug builds print one geometry line per placement, e.g.
    `[AgoyNotch] screen.maxY=832.0 window.maxY=832.0 notch=(185.0, 32.0) …` —
-   `window.maxY` must equal `screen.maxY`.
+   `window.maxY` must equal `screen.maxY`. The same line shows the window `frame`,
+   `isVisible` and the hover zone in screen coordinates (`hoverOnScreen`).
+3. Debug builds also log `mouseEntered` / `mouseExited`, `hover inside=true|false`,
+   `open` / `close`, and `ensureVisible isVisible=… frame=…` whenever the panel is re-shown.
 
 In this flow the app runs as a bare executable, not a bundle: launch at login is disabled,
 and settings are stored under the executable's defaults domain, separate from the bundled

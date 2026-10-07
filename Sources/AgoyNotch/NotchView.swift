@@ -15,7 +15,9 @@
 //  Morph: the shape's frame animates from the notch size to the panel size, anchored
 //  top-center, using the spring from Settings → Animation duration (0 = instant). The
 //  collapsed end state is fully invisible (opacity 0, no hit-testing), so when idle the
-//  user sees only the real notch. The NSWindow itself never resizes.
+//  user sees only the real notch. The NSWindow is only the hover-zone size while collapsed;
+//  the controller grows it to the panel size just before opening (before this morph starts)
+//  and shrinks it after the close animation, so the morph always runs in the large window.
 //
 
 import SwiftUI

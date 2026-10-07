@@ -7,6 +7,7 @@
 //  (no Save button, no restart).
 //
 
+import AppKit
 import ServiceManagement
 import SwiftUI
 
@@ -37,7 +38,14 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 640)
+        // Flexible so the window can be resized and zoomed (green button).
+        .frame(minWidth: 480, idealWidth: 480, minHeight: 480, idealHeight: 640)
+        // The hosting view is reused across close/reopen, so re-read the real login-item
+        // status every time the window appears.
+        .onAppear { loginEnabled = (SMAppService.mainApp.status == .enabled) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            loginEnabled = (SMAppService.mainApp.status == .enabled)
+        }
     }
 
     // MARK: - Sections
@@ -48,7 +56,12 @@ struct SettingsView: View {
                 title: "Width",
                 value: Binding(
                     get: { Double(settings.effectiveHoverSize.width) },
-                    set: { settings.hoverWidth = $0.rounded() }
+                    // Clamped (never 0), so dragging always leaves "match notch" mode and
+                    // writes the stored hoverWidth that drives the tracking rect.
+                    set: {
+                        settings.hoverWidth = min(max($0.rounded(), AppSettings.Range.hoverWidth.lowerBound),
+                                                  AppSettings.Range.hoverWidth.upperBound)
+                    }
                 ),
                 range: AppSettings.Range.hoverWidth,
                 step: 1,
@@ -58,7 +71,10 @@ struct SettingsView: View {
                 title: "Height",
                 value: Binding(
                     get: { Double(settings.effectiveHoverSize.height) },
-                    set: { settings.hoverHeight = $0.rounded() }
+                    set: {
+                        settings.hoverHeight = min(max($0.rounded(), AppSettings.Range.hoverHeight.lowerBound),
+                                                   AppSettings.Range.hoverHeight.upperBound)
+                    }
                 ),
                 range: AppSettings.Range.hoverHeight,
                 step: 1,

@@ -17,7 +17,8 @@ import SwiftUI
 /// Uses NSHostingView's inherited initializers.
 final class NotchHostingView: NSHostingView<NotchView> {
 
-    /// Called with `true` on mouse-enter and `false` on mouse-exit.
+    /// Called with `true` when the cursor enters the tracked rect and `false` when it leaves
+    /// (reconciled against the real cursor position, see `reconcileHover`).
     var onHoverChange: ((Bool) -> Void)?
 
     /// Supplies the current CLICK region, in this view's coordinate space. Independent of
@@ -58,17 +59,55 @@ final class NotchHostingView: NSHostingView<NotchView> {
     }
 
     /// Rebuilds the tracking area against the CURRENT tracking rect. The controller calls
-    /// this when `isExpanded` toggles and whenever a geometry setting changes.
+    /// this when `isExpanded` toggles and whenever a geometry setting changes. Rebuilding
+    /// while the cursor is inside can deliver a spurious exit, so the real cursor position
+    /// is reconciled right after.
     func refreshTracking() {
         updateTrackingAreas()
+        reconcileHover()
+    }
+
+    // MARK: - Position-based hover
+
+    /// The last hover state reported through `onHoverChange`.
+    private(set) var isPointerInside = false
+
+    /// Whether the cursor is currently inside the tracked rect, from the REAL cursor
+    /// position (not from enter/exit events, which can be lost or spurious).
+    func pointerIsInTrackedRect(windowPoint: NSPoint? = nil) -> Bool {
+        guard let window, window.isVisible else { return false }
+        let p = windowPoint ?? window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        // 1 pt slop: CGRect.contains excludes maxY, which is the screen-top edge here.
+        return (trackingRectProvider?() ?? bounds)
+            .insetBy(dx: -1, dy: -1)
+            .contains(convert(p, from: nil))
+    }
+
+    /// Reports a hover change only when the real inside/outside state differs from the last
+    /// reported one, so spurious or duplicate events cannot wedge the open/close logic.
+    func reconcileHover(windowPoint: NSPoint? = nil) {
+        let inside = pointerIsInTrackedRect(windowPoint: windowPoint)
+        guard inside != isPointerInside else { return }
+        isPointerInside = inside
+        #if DEBUG
+        let rect = trackingRectProvider?() ?? bounds
+        print("[AgoyNotch] hover inside=\(inside) rect=\(rect) mouse=\(NSEvent.mouseLocation)")
+        #endif
+        onHoverChange?(inside)
     }
 
     override func mouseEntered(with event: NSEvent) {
-        onHoverChange?(true)
+        #if DEBUG
+        print("[AgoyNotch] mouseEntered")
+        #endif
+        reconcileHover(windowPoint: event.locationInWindow)
     }
 
     override func mouseExited(with event: NSEvent) {
-        onHoverChange?(false)
+        #if DEBUG
+        print("[AgoyNotch] mouseExited")
+        #endif
+        reconcileHover(windowPoint: event.locationInWindow)
     }
 
     // MARK: - Click pass-through
@@ -113,6 +152,10 @@ final class NotchWindow: NSPanel {
         // Must stay interactive so the hover tracking area keeps firing. Click pass-through
         // outside the panel is handled by NotchHostingView.hitTest.
         ignoresMouseEvents = false
+        // NSPanel defaults this to true: AppKit would HIDE the notch panel whenever the app
+        // deactivates (e.g. the user clicks another app after Settings activated us), and a
+        // hidden window's tracking area never fires — hover would be dead.
+        hidesOnDeactivate = false
         // Every Space, over full-screen apps, not moved by Exposé, skipped by ⌘`.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
