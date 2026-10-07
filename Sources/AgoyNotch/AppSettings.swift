@@ -3,7 +3,8 @@
 //  AgoyNotch
 //
 //  The single source of truth for every user setting (hover zone size, open/close delays,
-//  animation speed, position/size fine-tuning, launch behaviour). Each value is a
+//  animation speed, position/size fine-tuning, Clock & Calendar colours, launch
+//  behaviour). Colours are stored as sRGB "RRGGBBAA" hex strings. Each value is a
 //  `@Published` property persisted to UserDefaults in its `didSet`, so the Settings window
 //  binds to it directly and every change is applied LIVE: NotchViewModel forwards
 //  `objectWillChange` (the view redraws), NotchWindowController subscribes to the geometry
@@ -13,6 +14,7 @@
 //  Everything is local-only (standard UserDefaults suite). No network, no telemetry.
 //
 
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -34,6 +36,13 @@ final class AppSettings: ObservableObject {
         static let closeDelay = "AgoyNotch.v2.closeDelay"
         static let animationDuration = "AgoyNotch.v2.animationDuration"
         static let showSettingsOnLaunch = "AgoyNotch.v2.showSettingsOnLaunch"
+        // Clock & Calendar colours, stored as sRGB "RRGGBBAA" hex strings.
+        static let clockColor = "AgoyNotch.v2.clockColor"
+        static let secondsColor = "AgoyNotch.v2.secondsColor"
+        static let dateColor = "AgoyNotch.v2.dateColor"
+        static let weekdayColor = "AgoyNotch.v2.weekdayColor"
+        static let todayHighlightColor = "AgoyNotch.v2.todayHighlightColor"
+        static let todayTextColor = "AgoyNotch.v2.todayTextColor"
 
         /// Keys from the removed `NotchSettings` struct, cleared once on launch.
         static let legacy = [
@@ -72,6 +81,14 @@ final class AppSettings: ObservableObject {
         static let closeDelay: Double = 0.35
         static let animationDuration: Double = 0.35
         static let showSettingsOnLaunch = true
+        // Colours matching the original look (explicit sRGB so they round-trip exactly).
+        static let clockColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+        static let secondsColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+        /// Month label is drawn at ×0.7 and week numbers at ×0.85 of this, as before.
+        static let dateColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+        static let weekdayColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 0.5)
+        static let todayHighlightColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+        static let todayTextColor = Color(.sRGB, red: 0, green: 0, blue: 0, opacity: 1)
     }
 
     private let defaults: UserDefaults
@@ -109,6 +126,56 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(showSettingsOnLaunch, forKey: Key.showSettingsOnLaunch) }
     }
 
+    // MARK: - Clock & Calendar colours (persisted as sRGB hex)
+
+    /// Clock hours:minutes ("HH:mm").
+    @Published var clockColor: Color = Default.clockColor {
+        didSet { storeColor(clockColor, Key.clockColor) }
+    }
+    /// Clock seconds (":ss").
+    @Published var secondsColor: Color = Default.secondsColor {
+        didSet { storeColor(secondsColor, Key.secondsColor) }
+    }
+    /// Month label, big day number and week-strip numbers.
+    @Published var dateColor: Color = Default.dateColor {
+        didSet { storeColor(dateColor, Key.dateColor) }
+    }
+    /// Weekday letters in the week strip.
+    @Published var weekdayColor: Color = Default.weekdayColor {
+        didSet { storeColor(weekdayColor, Key.weekdayColor) }
+    }
+    /// The circle behind today's number in the week strip.
+    @Published var todayHighlightColor: Color = Default.todayHighlightColor {
+        didSet { storeColor(todayHighlightColor, Key.todayHighlightColor) }
+    }
+    /// Today's number, drawn on top of the highlight circle.
+    @Published var todayTextColor: Color = Default.todayTextColor {
+        didSet { storeColor(todayTextColor, Key.todayTextColor) }
+    }
+
+    private func storeColor(_ color: Color, _ key: String) {
+        if let hex = Self.hexRGBA(from: color) {
+            defaults.set(hex, forKey: key)
+        }
+    }
+
+    /// `Color` → "RRGGBBAA" in sRGB, or nil if the colour can't be converted.
+    static func hexRGBA(from color: Color) -> String? {
+        guard let c = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+        func byte(_ v: CGFloat) -> Int { Int(min(max((v * 255).rounded(), 0), 255)) }
+        return String(format: "%02X%02X%02X%02X",
+                      byte(c.redComponent), byte(c.greenComponent),
+                      byte(c.blueComponent), byte(c.alphaComponent))
+    }
+
+    /// "RRGGBBAA" (sRGB) → `Color`, or nil if the string is malformed.
+    static func color(fromHex hex: String) -> Color? {
+        guard hex.count == 8, let v = UInt32(hex, radix: 16) else { return nil }
+        func component(_ shift: UInt32) -> Double { Double((v >> shift) & 0xFF) / 255 }
+        return Color(.sRGB, red: component(24), green: component(16),
+                     blue: component(8), opacity: component(0))
+    }
+
     // MARK: - Runtime (not persisted)
 
     /// The hardware notch size of the current screen. Set by NotchWindowController whenever
@@ -141,6 +208,16 @@ final class AppSettings: ObservableObject {
                                  Range.animationDuration)
         showSettingsOnLaunch = defaults.object(forKey: Key.showSettingsOnLaunch) as? Bool
             ?? Default.showSettingsOnLaunch
+
+        func loadColor(_ key: String, _ fallback: Color) -> Color {
+            defaults.string(forKey: key).flatMap { Self.color(fromHex: $0) } ?? fallback
+        }
+        clockColor = loadColor(Key.clockColor, Default.clockColor)
+        secondsColor = loadColor(Key.secondsColor, Default.secondsColor)
+        dateColor = loadColor(Key.dateColor, Default.dateColor)
+        weekdayColor = loadColor(Key.weekdayColor, Default.weekdayColor)
+        todayHighlightColor = loadColor(Key.todayHighlightColor, Default.todayHighlightColor)
+        todayTextColor = loadColor(Key.todayTextColor, Default.todayTextColor)
 
         for key in Key.legacy {
             defaults.removeObject(forKey: key)
@@ -177,5 +254,16 @@ final class AppSettings: ObservableObject {
         closeDelay = Default.closeDelay
         animationDuration = Default.animationDuration
         showSettingsOnLaunch = Default.showSettingsOnLaunch
+        resetAppearance()
+    }
+
+    /// Restores the Clock & Calendar colours only.
+    func resetAppearance() {
+        clockColor = Default.clockColor
+        secondsColor = Default.secondsColor
+        dateColor = Default.dateColor
+        weekdayColor = Default.weekdayColor
+        todayHighlightColor = Default.todayHighlightColor
+        todayTextColor = Default.todayTextColor
     }
 }

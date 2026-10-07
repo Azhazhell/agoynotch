@@ -21,23 +21,36 @@
 
 import SwiftUI
 
-/// The clock + calendar block rendered as the right column of the expanded panel. Text is
-/// light/white on the dark panel to match the Now Playing styling.
+/// The clock + calendar block rendered as the right column of the expanded panel. Colours
+/// come from AppSettings (Settings → Clock & Calendar); the defaults are the original
+/// white/light-grey on the dark panel with a white today-highlight.
 struct ClockCalendarView: View {
+
+    /// Colours (Settings → Clock & Calendar). Observed directly so changes apply live.
+    @ObservedObject var settings: AppSettings
 
     // MARK: - Formatters (locale-aware, built once)
 
-    /// Live-clock formatter. Uses the user's locale/calendar but a fixed 24-hour pattern with
-    /// seconds (HH:mm:ss). Built once; `DateFormatter` is reused across ticks.
-    private let timeFormatter: DateFormatter = {
+    /// Live-clock formatters: a fixed 24-hour "HH:mm" plus a separate "ss", so the seconds
+    /// can be drawn in their own colour. Fixed formats (not localized templates) so seconds
+    /// are always shown and always tick visibly. Built once, reused across ticks.
+    private let hourMinuteFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale.current
         f.calendar = Calendar.current
-        // 24-hour clock with seconds. Fixed format (not localized template) so seconds are
-        // always shown and always tick visibly.
-        f.dateFormat = "HH:mm:ss"
+        f.dateFormat = "HH:mm"
         return f
     }()
+
+    private let secondsFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale.current
+        f.calendar = Calendar.current
+        f.dateFormat = "ss"
+        return f
+    }()
+
+    private let clockFont = Font.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit()
 
     /// Month label formatter (e.g. "Aug"), localized to the user's locale.
     private let monthFormatter: DateFormatter = {
@@ -59,11 +72,16 @@ struct ClockCalendarView: View {
             // LIVE CLOCK — re-evaluated every second by the TimelineView, so the seconds tick
             // visibly while the panel is expanded. Auto-pauses when the view leaves screen.
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(timeFormatter.string(from: context.date))
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+                // Two Texts in an HStack so HH:mm and :ss can have different colours.
+                HStack(spacing: 0) {
+                    Text(hourMinuteFormatter.string(from: context.date))
+                        .font(clockFont)
+                        .foregroundStyle(settings.clockColor)
+                    Text(":" + secondsFormatter.string(from: context.date))
+                        .font(clockFont)
+                        .foregroundStyle(settings.secondsColor)
+                }
+                .lineLimit(1)
             }
 
             calendarBlock
@@ -85,10 +103,10 @@ struct ClockCalendarView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(monthFormatter.string(from: now))
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(settings.dateColor.opacity(0.7))
                 Text("\(dayNumber)")
                     .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(settings.dateColor)
             }
 
             // One-week strip: weekday letters with today highlighted.
@@ -116,14 +134,14 @@ struct ClockCalendarView: View {
                 VStack(spacing: 3) {
                     Text(letters[weekdayIndex])
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(settings.weekdayColor)
                     Text("\(calendar.component(.day, from: day))")
                         .font(.system(size: 11, weight: isToday ? .bold : .regular))
-                        .foregroundStyle(isToday ? Color.black : .white.opacity(0.85))
+                        .foregroundStyle(isToday ? settings.todayTextColor : settings.dateColor.opacity(0.85))
                         .frame(width: 20, height: 20)
                         .background(
                             Circle()
-                                .fill(isToday ? Color.white : Color.clear)
+                                .fill(isToday ? settings.todayHighlightColor : Color.clear)
                         )
                 }
             }

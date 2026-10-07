@@ -27,6 +27,7 @@ struct SettingsView: View {
         Form {
             hoverSection
             timingSection
+            appearanceSection
             positionSection
             generalSection
 
@@ -103,7 +104,28 @@ struct SettingsView: View {
             Text("Hover area")
         } footer: {
             Text("The invisible zone over your real notch that opens the panel. "
-                 + "Vertical offset moves only this zone down; the panel always starts at the top of the screen.")
+                 + "Vertical offset moves only this zone down; the panel always starts at the top of the screen. "
+                 + "While you adjust these, the zone is outlined on screen for a moment.")
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            ClockColorPreview(settings: settings)
+            ColorPicker("Clock (hours:minutes)", selection: $settings.clockColor, supportsOpacity: true)
+            ColorPicker("Seconds", selection: $settings.secondsColor, supportsOpacity: true)
+            ColorPicker("Date & month", selection: $settings.dateColor, supportsOpacity: true)
+            ColorPicker("Weekday letters", selection: $settings.weekdayColor, supportsOpacity: true)
+            ColorPicker("Today highlight", selection: $settings.todayHighlightColor, supportsOpacity: true)
+            ColorPicker("Today number", selection: $settings.todayTextColor, supportsOpacity: true)
+            HStack {
+                Spacer()
+                Button("Reset colours") { settings.resetAppearance() }
+            }
+        } header: {
+            Text("Clock & Calendar")
+        } footer: {
+            Text("Colours apply live to the expanded panel.")
         }
     }
 
@@ -179,6 +201,55 @@ struct SettingsView: View {
             loginError = error.localizedDescription
         }
         loginEnabled = (SMAppService.mainApp.status == .enabled)
+    }
+}
+
+// MARK: - Clock colour preview
+
+/// A small live sample of the clock + calendar colours on the panel's black background, so
+/// colour changes are visible without hovering the notch.
+private struct ClockColorPreview: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            HStack(spacing: 0) {
+                Text("12:34").foregroundStyle(settings.clockColor)
+                Text(":56").foregroundStyle(settings.secondsColor)
+            }
+            .font(.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit())
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Aug")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(settings.dateColor.opacity(0.7))
+                Text("7")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(settings.dateColor)
+            }
+
+            VStack(spacing: 3) {
+                Text("M T W")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(settings.weekdayColor)
+                HStack(spacing: 4) {
+                    Text("6")
+                        .foregroundStyle(settings.dateColor.opacity(0.85))
+                    Text("7")
+                        .fontWeight(.bold)
+                        .foregroundStyle(settings.todayTextColor)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(settings.todayHighlightColor))
+                    Text("8")
+                        .foregroundStyle(settings.dateColor.opacity(0.85))
+                }
+                .font(.system(size: 11))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black))
     }
 }
 

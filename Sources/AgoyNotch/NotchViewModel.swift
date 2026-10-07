@@ -55,8 +55,9 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// The COLLAPSED NSWindow size: exactly the hover zone (plus its vertical offset from the
-    /// screen top). While collapsed the window covers only the hardware notch, so it can
-    /// never swallow clicks meant for other windows (e.g. the Settings title bar).
+    /// screen top), so the hover-zone preview outline fits. While collapsed the window also
+    /// ignores mouse events entirely (see NotchWindowController), so it never swallows
+    /// clicks on menu-bar items beside the notch.
     var collapsedWindowSize: CGSize {
         let hover = hoverSize
         return CGSize(width: hover.width, height: hover.height + CGFloat(settings.hoverVerticalOffset))
@@ -75,9 +76,9 @@ final class NotchViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    /// Reports whether the cursor is REALLY inside the tracked rect right now. Set by the
-    /// window controller; checked when a delayed open/close fires so a lost exit/enter event
-    /// cannot open or close the panel against the cursor's real position.
+    /// Reports whether the cursor is REALLY inside the active hover zone right now (screen
+    /// coordinates). Set by the window controller; checked when a delayed open/close fires
+    /// so the panel never opens or closes against the cursor's real position.
     var pointerInsideProvider: (() -> Bool)?
 
     /// Called synchronously just before `isExpanded` changes (with the new value), so the
@@ -100,14 +101,38 @@ final class NotchViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    // MARK: - Hover-zone preview
+
+    /// True for a moment after a hover-zone setting changes, so NotchView can outline the
+    /// (otherwise invisible) zone on screen while the user adjusts it.
+    @Published var showsHoverZonePreview = false
+    private var previewTask: Task<Void, Never>?
+
+    /// Shows the hover-zone outline for 1.5 s (restarted by every call).
+    func flashHoverZonePreview() {
+        showsHoverZonePreview = true
+        previewTask?.cancel()
+        previewTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.showsHoverZonePreview = false
+        }
+    }
+
     // MARK: - Hover handling
 
-    /// Forwarded from the window's tracking area.
+    /// LEVEL-triggered hover input, called by the window controller on every mouse move,
+    /// poll tick and geometry change with the REAL cursor position (screen coordinates).
+    /// Idempotent, so calling it repeatedly with the same value is harmless:
     ///
-    /// - Enter: cancels any pending close; opens now (open delay 0) or after the delay.
-    /// - Exit:  cancels any pending open (leaving early = never opens); closes now (close
-    ///          delay 0) or after the delay.
-    func hoverChanged(_ isInside: Bool) {
+    /// - Inside:  cancels any pending close; if collapsed with no pending open, opens now
+    ///            (open delay 0) or after the delay.
+    /// - Outside: cancels any pending open (leaving early = never opens); if expanded with
+    ///            no pending close, closes now (close delay 0) or after the delay.
+    ///
+    /// Because it is level-triggered, a delayed open/close whose re-check fails just leaves
+    /// `pending* == nil`, and the next call re-arms it — the state can never get stuck.
+    func updateHover(isInside: Bool) {
         if isInside {
             pendingClose?.cancel()
             pendingClose = nil
@@ -132,16 +157,15 @@ final class NotchViewModel: ObservableObject {
         } else {
             pendingOpen?.cancel()
             pendingOpen = nil
-            guard isExpanded else { return }
+            // `pendingClose == nil` is essential: without it every tick would restart the
+            // close timer and the panel would never close.
+            guard isExpanded, pendingClose == nil else { return }
 
             let delay = settings.closeDelay
             if delay <= 0 {
-                pendingClose?.cancel()
-                pendingClose = nil
                 setExpanded(false)
                 return
             }
-            pendingClose?.cancel()
             let nanos = UInt64(delay * 1_000_000_000)
             pendingClose = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: nanos)
@@ -154,13 +178,20 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    /// True while `expansionWillChange` runs. Growing the window there re-evaluates hover
+    /// (positionWindow → refreshTracking → updateHover) while `isExpanded` still has the old
+    /// value; this flag makes that nested call a no-op instead of a second, nested open.
+    private var isChangingExpansion = false
+
     /// The single place `isExpanded` is written.
     private func setExpanded(_ value: Bool) {
-        guard isExpanded != value else { return }
+        guard isExpanded != value, !isChangingExpansion else { return }
         #if DEBUG
         print("[AgoyNotch] \(value ? "open" : "close")")
         #endif
+        isChangingExpansion = true
         expansionWillChange?(value)
+        isChangingExpansion = false
         isExpanded = value
     }
 }

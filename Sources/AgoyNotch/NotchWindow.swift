@@ -5,9 +5,10 @@
 //  A borderless, transparent, non-activating NSPanel whose top edge sits at the physical
 //  top of the screen, over the hardware notch and the menu bar. It never becomes key/main,
 //  so hovering or clicking it never steals focus from the user's current app. Hover is
-//  driven by an AppKit NSTrackingArea (SwiftUI `.onHover` over a transparent
-//  non-activating panel is unreliable), installed on the hosting view and forwarded to the
-//  view model.
+//  decided by NotchWindowController from the cursor position in SCREEN coordinates; the
+//  NSTrackingArea on the hosting view is only a fast path that pings the controller on
+//  enter/exit (it fires only while the window accepts mouse events, i.e. when expanded).
+//  While collapsed the window ignores mouse events entirely (click-through).
 //
 
 import AppKit
@@ -16,10 +17,6 @@ import SwiftUI
 /// Hosting view subclass that owns the tracking area and forwards enter/exit events.
 /// Uses NSHostingView's inherited initializers.
 final class NotchHostingView: NSHostingView<NotchView> {
-
-    /// Called with `true` when the cursor enters the tracked rect and `false` when it leaves
-    /// (reconciled against the real cursor position, see `reconcileHover`).
-    var onHoverChange: ((Bool) -> Void)?
 
     /// Supplies the current CLICK region, in this view's coordinate space. Independent of
     /// the hover region (`trackingRectProvider`): NSTrackingArea and hitTest are separate in
@@ -58,63 +55,39 @@ final class NotchHostingView: NSHostingView<NotchView> {
         trackingArea = area
     }
 
-    /// Rebuilds the tracking area against the CURRENT tracking rect. The controller calls
-    /// this when `isExpanded` toggles and whenever a geometry setting changes. Rebuilding
-    /// while the cursor is inside can deliver a spurious exit, so the real cursor position
-    /// is reconciled right after.
+    /// Rebuilds the tracking area against the CURRENT tracking rect, then asks the controller
+    /// to re-evaluate hover from the real cursor position. The controller calls this when
+    /// `isExpanded` toggles and whenever a geometry setting changes.
     func refreshTracking() {
         updateTrackingAreas()
-        reconcileHover()
+        onPointerEvent?()
     }
 
-    // MARK: - Position-based hover
+    // MARK: - Pointer events (fast path only)
 
-    /// The last hover state reported through `onHoverChange`.
-    private(set) var isPointerInside = false
-
-    /// Whether the cursor is currently inside the tracked rect, from the REAL cursor
-    /// position (not from enter/exit events, which can be lost or spurious).
-    func pointerIsInTrackedRect(windowPoint: NSPoint? = nil) -> Bool {
-        guard let window, window.isVisible else { return false }
-        let p = windowPoint ?? window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        // 1 pt slop: CGRect.contains excludes maxY, which is the screen-top edge here.
-        return (trackingRectProvider?() ?? bounds)
-            .insetBy(dx: -1, dy: -1)
-            .contains(convert(p, from: nil))
-    }
-
-    /// Reports a hover change only when the real inside/outside state differs from the last
-    /// reported one, so spurious or duplicate events cannot wedge the open/close logic.
-    func reconcileHover(windowPoint: NSPoint? = nil) {
-        let inside = pointerIsInTrackedRect(windowPoint: windowPoint)
-        guard inside != isPointerInside else { return }
-        isPointerInside = inside
-        #if DEBUG
-        let rect = trackingRectProvider?() ?? bounds
-        print("[AgoyNotch] hover inside=\(inside) rect=\(rect) mouse=\(NSEvent.mouseLocation)")
-        #endif
-        onHoverChange?(inside)
-    }
+    /// Called on every tracking-area enter/exit. It carries NO inside/outside value: the
+    /// controller evaluates hover from `NSEvent.mouseLocation` in screen coordinates, so a
+    /// stale, spurious or boundary event location can never flip the hover state.
+    var onPointerEvent: (() -> Void)?
 
     override func mouseEntered(with event: NSEvent) {
         #if DEBUG
         print("[AgoyNotch] mouseEntered")
         #endif
-        reconcileHover(windowPoint: event.locationInWindow)
+        onPointerEvent?()
     }
 
     override func mouseExited(with event: NSEvent) {
         #if DEBUG
         print("[AgoyNotch] mouseExited")
         #endif
-        reconcileHover(windowPoint: event.locationInWindow)
+        onPointerEvent?()
     }
 
     // MARK: - Click pass-through
 
-    /// Only the painted panel swallows clicks; everywhere else returns `nil` so clicks pass
-    /// through. Returning `nil` here does not affect the NSTrackingArea, so hover still
-    /// fires over the notch while collapsed.
+    /// While expanded (the only time the window accepts mouse events), only the painted
+    /// panel swallows clicks; everywhere else returns `nil` so clicks pass through.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let provider = interactiveRectProvider, let interactive = provider() else {
             return super.hitTest(point)
@@ -149,9 +122,13 @@ final class NotchWindow: NSPanel {
         level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         isFloatingPanel = true
         isMovableByWindowBackground = false
-        // Must stay interactive so the hover tracking area keeps firing. Click pass-through
-        // outside the panel is handled by NotchHostingView.hitTest.
-        ignoresMouseEvents = false
+        // The panel starts COLLAPSED, so it starts click-through: clicks go straight to the
+        // menu-bar items beside the notch. Hover is detected from the cursor position (not
+        // from events reaching this window), and NotchWindowController turns mouse events
+        // back on just before the panel expands (so the buttons work) and off on collapse.
+        // Inside the expanded window, NotchHostingView.hitTest still passes through clicks
+        // outside the painted panel.
+        ignoresMouseEvents = true
         // NSPanel defaults this to true: AppKit would HIDE the notch panel whenever the app
         // deactivates (e.g. the user clicks another app after Settings activated us), and a
         // hidden window's tracking area never fires — hover would be dead.

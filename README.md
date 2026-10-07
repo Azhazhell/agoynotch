@@ -37,7 +37,7 @@ with **no third-party dependencies**.
 ```
 
 This runs `swift build -c release`, assembles `build/AgoyNotch.app` (binary +
-`Resources/Info.plist`), ad-hoc signs it, copies it to `/Applications` (replacing any old
+`Resources/Info.plist` + `AppIcon.icns`), ad-hoc signs it, copies it to `/Applications` (replacing any old
 copy, quitting a running one first) and opens it. Options:
 
 - no flag — only build `build/AgoyNotch.app`
@@ -66,8 +66,8 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 
 | Setting | Range (default) | What it does |
 |---|---|---|
-| Hover area → Width | 80–400 pt (your notch width) | Width of the invisible zone over the notch that opens the panel. |
-| Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the top of the screen. |
+| Hover area → Width | 80–400 pt (your notch width) | Width of the invisible zone that opens the panel, centred on the notch. Applied live while dragging; the zone is outlined on screen for a moment so you can see it. |
+| Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the top of the screen. Applied live, with the same outline. |
 | Match notch | — | Resets width/height to the detected notch size (shown above the button). |
 | Hover area → Vertical offset | 0–40 pt (0) | Moves only the hover zone down. The panel always starts at the top of the screen. Any offset above 0 leaves the very top edge (that many points) inert. |
 | Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
@@ -77,11 +77,19 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Panel width / height | 480–800 pt (600) / 180–320 pt (240) | Size of the expanded panel (height includes the band over the notch). |
 | Show this window when AgoyNotch starts | on | Turn off if you use launch at login and don't want the window at every login. |
 | Launch at login | off | Registers AgoyNotch as a login item (`SMAppService`). Only works from the built `.app`; errors are shown inline. |
-| Reset to defaults | — | Restores every value above (except launch at login). |
+| Clock & Calendar → Clock / Seconds | white | Colour of the `HH:mm` part and of the `:ss` part of the live clock (separately). |
+| Clock & Calendar → Date & month | white | Month label, big day number and week-strip numbers. |
+| Clock & Calendar → Weekday letters | white 50 % | The letters above the week strip. |
+| Clock & Calendar → Today highlight / Today number | white / black | The circle behind today's date and the number on it. |
+| Reset colours | — | Restores only the six colours. A live preview sits at the top of the section. |
+| Reset to defaults | — | Restores every value above, colours included (except launch at login). |
 
 While collapsed only the hover zone reacts to the cursor; once open, the whole panel does,
 so you can move down to the transport buttons without it closing. While collapsed the overlay
-is only the size of the hover zone, so it never blocks clicks on other windows.
+ignores the mouse entirely (clicks reach the menu bar); hover is detected from the cursor
+position in screen coordinates (inclusive of the very top row of the screen), re-checked on
+every mouse move and on a short poll, so a cursor resting inside the notch opens the panel
+without having to wiggle it.
 
 The Settings window can be resized, minimized and zoomed.
 
@@ -91,7 +99,7 @@ Beside the Now Playing section, the expanded panel shows a **live clock and a co
 calendar**, laid out as the right-hand column with a subtle divider between the two sections:
 
 - **Live clock** — the time ticks every second (24-hour `HH:mm:ss`) while the panel is
-  expanded. It is driven by SwiftUI's `TimelineView(.periodic(from: .now, by: 1))`, so there
+  expanded. `HH:mm` and `:ss` have separately configurable colours (Settings → Clock & Calendar). It is driven by SwiftUI's `TimelineView(.periodic(from: .now, by: 1))`, so there
   is no manual `Timer` to leak or tear down and the updates pause automatically when the panel
   is collapsed.
 - **Calendar** — a month label (e.g. `Aug`), a large current-day number, and a one-week strip
@@ -139,13 +147,22 @@ now the live source. `MediaRemoteBridge` remains in the tree only to document th
 2. Debug builds print one geometry line per placement, e.g.
    `[AgoyNotch] screen.maxY=832.0 window.maxY=832.0 notch=(185.0, 32.0) …` —
    `window.maxY` must equal `screen.maxY`. The same line shows the window `frame`,
-   `isVisible` and the hover zone in screen coordinates (`hoverOnScreen`).
-3. Debug builds also log `mouseEntered` / `mouseExited`, `hover inside=true|false`,
-   `open` / `close`, and `ensureVisible isVisible=… frame=…` whenever the panel is re-shown.
+   `isVisible` and the hover zone in screen coordinates (`hoverZoneOnScreen`).
+3. Debug builds also log `mouseEntered` / `mouseExited`, `open` / `close`,
+   `ensureVisible isVisible=… ignoresMouseEvents=…`, and — each time the result changes —
+   `hover inside=true|false expanded=… zone=… mouse=…` from the screen-space evaluator.
 
 In this flow the app runs as a bare executable, not a bundle: launch at login is disabled,
 and settings are stored under the executable's defaults domain, separate from the bundled
 app's `com.azhazhell.agoynotch`. Use `./scripts/build-app.sh --install` for everyday use.
+
+## App icon
+
+The skull icon is `Resources/AppIcon.png` (1024 × 1024, original artwork; editable source
+`Resources/AppIcon.svg`, regenerate the PNG with `python3 scripts/make-icon.py`).
+`build-app.sh` turns it into `AppIcon.icns` with `sips` + `iconutil` (it warns and continues
+without an icon if either is missing), and after `--install` refreshes LaunchServices. If
+Finder or the Dock still shows the old icon, run `killall Dock`.
 
 ## App Store & signing note
 
@@ -184,7 +201,9 @@ AgoyNotch/
   README.md
   .gitignore
   Resources/Info.plist                bundle Info.plist used by the build script
+  Resources/AppIcon.svg / .png        skull app icon (SVG source + rendered 1024 px PNG)
   scripts/build-app.sh                builds, signs and (optionally) installs AgoyNotch.app
+  scripts/make-icon.py                renders AppIcon.png (Python 3 stdlib only)
   Sources/AgoyNotch/
     AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate; ⌘, → Settings
     AppDelegate.swift                 object graph, status item (About / Settings… / Quit), reopen
@@ -192,7 +211,7 @@ AgoyNotch/
     SettingsView.swift                SwiftUI Settings form
     SettingsWindowController.swift    Settings NSWindow; .regular while open, .accessory after
     NotchWindow.swift                 borderless non-activating NSPanel above the menu bar + hover tracking
-    NotchWindowController.swift       notch measurement, placement at the screen top, live re-layout
+    NotchWindowController.swift       notch measurement, placement, screen-space hover, click-through
     NotchViewModel.swift              expand/collapse state, open/close delays, derived sizes
     NotchView.swift                   SwiftUI black panel growing out of the notch (Now Playing + clock)
     ClockCalendarView.swift           right column: live ticking clock + compact calendar

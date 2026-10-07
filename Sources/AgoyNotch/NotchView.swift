@@ -62,15 +62,41 @@ struct NotchView: View {
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(Color.black)
             .clipShape(shape)
-            // Collapsed end state = fully invisible; hover is detected by the tracking area,
-            // not by anything drawn here.
+            // Collapsed end state = fully invisible; hover is detected from the cursor
+            // position in screen space (NotchWindowController), not by anything drawn here.
             .opacity(expanded ? 1 : 0)
             .allowsHitTesting(expanded)
             // Pin to the window's top-center: the shape's top edge is y = 0 = screen top.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Brief outline of the hover zone while its Settings are being adjusted.
+            .overlay(alignment: .top) {
+                hoverZonePreview
+                    .animation(.easeOut(duration: 0.2), value: viewModel.showsHoverZonePreview)
+            }
             // Full-bleed overlay: never let a reported safe area push the shape down.
             .ignoresSafeArea()
             .animation(viewModel.settings.animation, value: expanded)
+    }
+
+    // MARK: - Hover-zone preview
+
+    /// The hover zone, outlined for a moment after a Hover-area / Horizontal-offset change.
+    /// The window is centred on the zone's centre and top-anchored at the screen top, so
+    /// this sits exactly on the screen-space hover zone. Purely visual: no hit-testing.
+    @ViewBuilder
+    private var hoverZonePreview: some View {
+        if viewModel.showsHoverZonePreview {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(0.30))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                )
+                .frame(width: viewModel.hoverSize.width, height: viewModel.hoverSize.height)
+                .padding(.top, CGFloat(viewModel.settings.hoverVerticalOffset))
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
     }
 
     // MARK: - Content
@@ -98,7 +124,7 @@ struct NotchView: View {
                 .frame(maxHeight: .infinity)
 
             // RIGHT: live clock (ticking seconds) + today's date / mini-week.
-            ClockCalendarView()
+            ClockCalendarView(settings: viewModel.settings)
                 .frame(width: 190, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

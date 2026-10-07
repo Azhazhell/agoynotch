@@ -6,10 +6,25 @@
 //  physical top of the screen (`screen.frame.maxY`), centered on the notch. Repositions
 //  live when a geometry setting changes or the display configuration changes.
 //
-//  Window size: while COLLAPSED the window is exactly the hover zone (it covers only the
-//  hardware notch, so it can never swallow clicks meant for other windows). Just before the
-//  panel opens it grows to the expanded size; after the close animation it shrinks back.
-//  The grow-out-of-the-notch morph itself is pure SwiftUI inside the window (see NotchView).
+//  Hover: decided HERE, in SCREEN coordinates, by comparing `NSEvent.mouseLocation` with
+//  a hover zone computed from `screen.frame` and Settings (Width × Height, centred on the
+//  notch plus the horizontal offset, anchored at the screen top minus the vertical
+//  offset). It never depends on the window bounds, event locations or tracking-area
+//  rebuilds. The containment test is inclusive and the zone reaches 2 pt above the screen
+//  top, so a cursor pinned to the very top row counts as inside. Evaluation is
+//  LEVEL-triggered (NotchViewModel.updateHover is idempotent) and runs on every mouse move
+//  (global + local monitors), on a poll (safety net for a stationary cursor), on
+//  tracking-area enter/exit (fast path while expanded), on expand/collapse, geometry
+//  changes and ensureVisible().
+//
+//  Clicks: while COLLAPSED the window ignores mouse events entirely, so it never swallows
+//  clicks on menu-bar items beside the notch; mouse events are turned on just before the
+//  panel expands (so the buttons work) and off again as soon as it starts to collapse.
+//
+//  Window size: while COLLAPSED the window is the hover-zone size (room for the hover-zone
+//  preview outline). Just before the panel opens it grows to the expanded size; after the
+//  close animation it shrinks back. The grow-out-of-the-notch morph itself is pure SwiftUI
+//  inside the window (see NotchView).
 //
 //  Visibility: the panel is re-ordered front whenever the app's activation state, the
 //  Space or the screen configuration changes, so it can never be left hidden.
@@ -35,6 +50,10 @@ final class NotchWindowController: NSWindowController {
     /// Notch size used on Macs without a hardware notch.
     private static let fallbackNotchSize = CGSize(width: 200, height: 32)
 
+    /// How far the hover zone reaches ABOVE the screen top. `NSEvent.mouseLocation.y` can be
+    /// exactly `screen.frame.maxY` on the top row, so the zone must include that edge.
+    private static let topSlop: CGFloat = 2
+
     /// Observer tokens. `nonisolated(unsafe)` because the nonisolated `deinit` reads them;
     /// they are written once in `init` and only read again in `deinit`, so there is no race.
     nonisolated(unsafe) private var appObservers: [NSObjectProtocol] = []
@@ -46,8 +65,17 @@ final class NotchWindowController: NSWindowController {
     private var windowIsExpandedSize = false
     /// Pending shrink back to the hover-zone size after the close animation.
     private var pendingShrink: Task<Void, Never>?
-    /// App-lifetime poll that reconciles hover state with the real cursor position.
+    /// App-lifetime poll that re-evaluates hover for a stationary cursor.
     private var hoverPoll: Task<Void, Never>?
+    /// NSEvent mouse-moved monitors (global + local). Main-actor state, deliberately NOT
+    /// removed in `deinit`: the controller lives for the whole app and the handlers capture
+    /// `self` weakly, so they become no-ops if it ever goes away.
+    private var mouseMonitors: [Any] = []
+    /// The frame of the screen the window was last placed on (screen coordinates).
+    private var screenFrame: CGRect?
+    #if DEBUG
+    private var lastLoggedInside: Bool?
+    #endif
 
     init(viewModel: NotchViewModel, settings: AppSettings) {
         self.viewModel = viewModel
@@ -66,14 +94,15 @@ final class NotchWindowController: NSWindowController {
 
         super.init(window: panel)
 
-        // Forward hover events from the hosting view's tracking area to the view model.
-        hosting.onHoverChange = { [weak viewModel] isInside in
-            viewModel?.hoverChanged(isInside)
+        // Tracking-area enter/exit (and tracking rebuilds) just trigger a screen-space
+        // re-evaluation; they carry no inside/outside value of their own.
+        hosting.onPointerEvent = { [weak self] in
+            self?.evaluateHover()
         }
 
         // Lets delayed opens/closes re-check the REAL cursor position when they fire.
-        viewModel.pointerInsideProvider = { [weak hosting] in
-            hosting?.pointerIsInTrackedRect() ?? false
+        viewModel.pointerInsideProvider = { [weak self] in
+            self?.pointerIsInActiveZone() ?? false
         }
 
         // Grow the window synchronously before opening; shrink after the close animation.
@@ -81,10 +110,11 @@ final class NotchWindowController: NSWindowController {
             self?.expansionWillChange(expanding)
         }
 
-        // HOVER rect (see NotchHostingView.trackingRectProvider):
+        // Tracking-area rect (fast path only; it fires while the window accepts mouse
+        // events, i.e. while expanded):
         //  • COLLAPSED → only the hover zone over the notch (Settings → Hover area).
         //  • EXPANDED  → the whole panel (plus the hover zone, in case it is offset below
-        //    the panel), so the cursor can reach the transport buttons.
+        //    the panel), so moving onto the transport buttons is noticed immediately.
         hosting.trackingRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
             let hoverRect = Self.topCenteredRect(
@@ -103,7 +133,8 @@ final class NotchWindowController: NSWindowController {
             return Self.topCenteredRect(viewModel.panelSize, in: hosting)
         }
 
-        // Swap the tracked rect between hover zone and panel on every expand/collapse.
+        // Swap the tracked rect between hover zone and panel on every expand/collapse
+        // (refreshTracking also re-evaluates hover via onPointerEvent).
         viewModel.$isExpanded
             // DispatchQueue.main (not RunLoop.main): RunLoop.main only delivers in the default
             // run-loop mode, so changes made while dragging a Settings slider would wait until
@@ -136,6 +167,21 @@ final class NotchWindowController: NSWindowController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.positionWindow()
+            }
+            .store(in: &cancellables)
+
+        // Outline the hover zone for a moment whenever its size or position changes, so the
+        // user can SEE the effect of the sliders. `dropFirst()` skips the replay on subscribe.
+        let hoverZoneChanges: [AnyPublisher<Void, Never>] = [
+            settings.$hoverWidth.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hoverHeight.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hoverVerticalOffset.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$horizontalOffset.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        ]
+        Publishers.MergeMany(hoverZoneChanges)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.viewModel.flashHoverZonePreview()
             }
             .store(in: &cancellables)
 
@@ -193,13 +239,15 @@ final class NotchWindowController: NSWindowController {
                 workspaceCenter.removeObserver(token)
             }
         }
+        // mouseMonitors: intentionally not touched (main-actor state; see its declaration).
     }
 
     // MARK: - Geometry
 
     /// A `size` rect, horizontally centered and hugging the TOP edge of the hosting view
     /// (optionally `topInset` points below it), in the hosting view's coordinates. Handles
-    /// both flipped and non-flipped hosting views.
+    /// both flipped and non-flipped hosting views. Used only for the tracking area (fast
+    /// path) and the click rect — hover itself is decided in screen space.
     private static func topCenteredRect(_ size: CGSize,
                                         topInset: CGFloat = 0,
                                         in hosting: NotchHostingView) -> CGRect {
@@ -228,6 +276,72 @@ final class NotchWindowController: NSWindowController {
         return CGSize(width: width, height: height)
     }
 
+    // MARK: - Screen-space hover zone
+
+    private func currentScreenFrame() -> CGRect? {
+        screenFrame ?? notchScreen()?.frame
+    }
+
+    /// The collapsed hover zone in SCREEN coordinates: exactly Settings Width × Height,
+    /// centred on the notch (`screen.midX + horizontalOffset`), its top at the screen top
+    /// minus the vertical offset. With no vertical offset it reaches `topSlop` above the
+    /// screen top, so the very top row is inside.
+    func hoverZoneOnScreen() -> CGRect? {
+        guard let sf = currentScreenFrame() else { return nil }
+        let s = viewModel.hoverSize
+        let cx = sf.midX + CGFloat(settings.horizontalOffset)
+        let top = sf.maxY - CGFloat(settings.hoverVerticalOffset)
+        var rect = CGRect(x: cx - s.width / 2, y: top - s.height, width: s.width, height: s.height)
+        if settings.hoverVerticalOffset <= 0 {
+            rect.size.height += Self.topSlop
+        }
+        return rect
+    }
+
+    /// The EXPANDED zone in SCREEN coordinates: the whole panel (from `topSlop` above the
+    /// screen top down to the panel bottom) plus the hover zone, so the cursor can travel
+    /// onto the transport buttons without closing the panel.
+    func panelZoneOnScreen() -> CGRect? {
+        guard let sf = currentScreenFrame(), let hover = hoverZoneOnScreen() else { return nil }
+        let p = viewModel.panelSize
+        let cx = sf.midX + CGFloat(settings.horizontalOffset)
+        let panel = CGRect(x: cx - p.width / 2, y: sf.maxY - p.height,
+                           width: p.width, height: p.height + Self.topSlop)
+        return panel.union(hover)
+    }
+
+    /// Whether the REAL cursor is inside the zone that matters right now (hover zone while
+    /// collapsed, panel ∪ hover zone while expanded). INCLUSIVE on every edge — unlike
+    /// CGRect.contains / NSPointInRect, which treat maxX/maxY as outside.
+    func pointerIsInActiveZone() -> Bool {
+        let zone = viewModel.isExpanded ? panelZoneOnScreen() : hoverZoneOnScreen()
+        guard let zone else { return false }
+        let p = NSEvent.mouseLocation
+        return p.x >= zone.minX && p.x <= zone.maxX && p.y >= zone.minY && p.y <= zone.maxY
+    }
+
+    /// Level-triggered hover evaluation; cheap and idempotent, safe to call at any time.
+    func evaluateHover() {
+        let inside = pointerIsInActiveZone()
+        #if DEBUG
+        if inside != lastLoggedInside {
+            lastLoggedInside = inside
+            let zone = viewModel.isExpanded ? panelZoneOnScreen() : hoverZoneOnScreen()
+            print("[AgoyNotch] hover inside=\(inside) expanded=\(viewModel.isExpanded) "
+                  + "zone=\(String(describing: zone)) mouse=\(NSEvent.mouseLocation)")
+        }
+        #endif
+        viewModel.updateHover(isInside: inside)
+    }
+
+    /// Whether the cursor is near the top of the screen (poll quickly there, slowly
+    /// elsewhere — the mouse-moved monitors cover moves anyway).
+    private func pointerIsNearTop() -> Bool {
+        guard let sf = currentScreenFrame() else { return true }
+        let p = NSEvent.mouseLocation
+        return p.y >= sf.maxY - 150 && p.x >= sf.minX && p.x <= sf.maxX
+    }
+
     // MARK: - Placement
 
     /// Sizes and places the window: top edge at `screen.frame.maxY` (the physical top of
@@ -237,6 +351,7 @@ final class NotchWindowController: NSWindowController {
     func positionWindow() {
         guard let window else { return }
         let screen = notchScreen()
+        screenFrame = screen?.frame
 
         // 1. Measure. Assign only on change: the assignment fires objectWillChange and we do
         //    not want redundant redraws (measuredNotchSize is not a geometry trigger, so
@@ -262,34 +377,36 @@ final class NotchWindowController: NSWindowController {
         window.setFrame(NSRect(x: originX, y: originY, width: size.width, height: size.height),
                         display: true)
 
-        // 4. The hover zone / panel rects may have changed.
+        // 4. The tracking rects may have changed; this also re-evaluates hover against the
+        //    NEW screen-space zone (so a resized zone takes effect without moving the cursor).
         hostingView.refreshTracking()
 
         #if DEBUG
-        let hoverRect = Self.topCenteredRect(viewModel.hoverSize,
-                                             topInset: CGFloat(settings.hoverVerticalOffset),
-                                             in: hostingView)
-        let hoverOnScreen = window.convertToScreen(hostingView.convert(hoverRect, to: nil))
         print("[AgoyNotch] screen.maxY=\(screenFrame.maxY) window.maxY=\(window.frame.maxY) "
               + "notch=\(notch) safeArea.top=\(screen?.safeAreaInsets.top ?? 0) "
               + "hosting.safeAreaInsets.top=\(hostingView.safeAreaInsets.top) "
               + "expandedSize=\(windowIsExpandedSize) frame=\(window.frame) "
-              + "isVisible=\(window.isVisible) hoverOnScreen=\(hoverOnScreen)")
+              + "isVisible=\(window.isVisible) "
+              + "hoverZoneOnScreen=\(String(describing: hoverZoneOnScreen()))")
         #endif
     }
 
     /// Grows the window before opening (synchronously, so SwiftUI animates the morph inside
     /// the already-large window) and shrinks it back once the close animation has finished.
+    /// Also toggles click-through: interactive only while expanded.
     private func expansionWillChange(_ expanding: Bool) {
         pendingShrink?.cancel()
         pendingShrink = nil
         if expanding {
+            window?.ignoresMouseEvents = false
             if !windowIsExpandedSize {
                 windowIsExpandedSize = true
                 positionWindow()
             }
             return
         }
+        // Collapsing: give clicks back to the menu bar immediately.
+        window?.ignoresMouseEvents = true
         // Plain value captured before the Task.
         let duration = max(settings.animationDuration, 0) + 0.05
         let nanos = UInt64(duration * 1_000_000_000)
@@ -305,29 +422,59 @@ final class NotchWindowController: NSWindowController {
     // MARK: - Visibility
 
     /// Orders the panel front (it must never stay hidden after an activation, Space or
-    /// screen change) and re-syncs hover with the real cursor position.
+    /// screen change) and re-evaluates hover with the real cursor position.
     func ensureVisible() {
         guard let window else { return }
         window.orderFrontRegardless()
-        hostingView.reconcileHover()
+        evaluateHover()
         #if DEBUG
         print("[AgoyNotch] ensureVisible isVisible=\(window.isVisible) frame=\(window.frame) "
-              + "occluded=\(!window.occlusionState.contains(.visible))")
+              + "occluded=\(!window.occlusionState.contains(.visible)) "
+              + "ignoresMouseEvents=\(window.ignoresMouseEvents)")
         #endif
     }
 
-    /// Shows the panel, performs the initial placement and starts the hover poll.
+    /// Shows the panel, performs the initial placement, installs the mouse-moved monitors
+    /// and starts the hover poll.
     func show() {
         positionWindow()
         ensureVisible()
+        if mouseMonitors.isEmpty {
+            // Mouse-moved monitors need no Accessibility permission. Global: moves while
+            // another app is under the cursor; local: moves delivered to this app.
+            if let global = NSEvent.addGlobalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged],
+                handler: { [weak self] _ in
+                    Task { @MainActor in
+                        self?.evaluateHover()
+                    }
+                }
+            ) {
+                mouseMonitors.append(global)
+            }
+            if let local = NSEvent.addLocalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged],
+                handler: { [weak self] event in
+                    Task { @MainActor in
+                        self?.evaluateHover()
+                    }
+                    return event
+                }
+            ) {
+                mouseMonitors.append(local)
+            }
+        }
         if hoverPoll == nil {
-            // Safety net against lost enter/exit events. `[weak self]`: the loop ends by
-            // itself if the controller goes away, so deinit never has to touch it.
+            // Safety net for a cursor that rests without moving (e.g. pinned at the top row
+            // while the zone changes). 100 ms near the top of the screen or while expanded,
+            // 500 ms elsewhere. `[weak self]`: the loop ends by itself if the controller goes
+            // away, so deinit never has to touch it.
             hoverPoll = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    let fast = self.map { $0.viewModel.isExpanded || $0.pointerIsNearTop() } ?? false
+                    try? await Task.sleep(nanoseconds: fast ? 100_000_000 : 500_000_000)
                     guard let self else { return }
-                    self.hostingView.reconcileHover()
+                    self.evaluateHover()
                 }
             }
         }

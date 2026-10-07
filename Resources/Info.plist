@@ -8,6 +8,10 @@
 	<string>AgoyNotch</string>
 	<key>CFBundleDisplayName</key>
 	<string>AgoyNotch</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
 	<string>AgoyNotch</string>
 	<key>CFBundlePackageType</key>
