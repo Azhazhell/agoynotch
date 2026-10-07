@@ -1,6 +1,6 @@
 //
 //  MediaRemoteBridge.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  ⚠️ PRIVATE FRAMEWORK BOUNDARY — READ THIS BEFORE EDITING ⚠️
 //

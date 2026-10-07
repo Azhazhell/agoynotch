@@ -1,6 +1,6 @@
 //
 //  NowPlayingManager.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  Observable service that turns the raw MediaRemote info dictionary into a published
 //  `NowPlayingInfo` and exposes transport commands. All MediaRemote unsafety lives in
@@ -22,7 +22,7 @@ final class NowPlayingManager: ObservableObject {
     private var notificationObservers: [NSObjectProtocol] = []
 
     /// Background queue used for the MediaRemote fetch callbacks so we never block the UI.
-    private let workQueue = DispatchQueue(label: "com.macnotch.nowplaying", qos: .userInitiated)
+    private let workQueue = DispatchQueue(label: "com.agoynotch.nowplaying", qos: .userInitiated)
 
     // MARK: - Lifecycle
 

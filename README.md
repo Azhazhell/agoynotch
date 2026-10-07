@@ -1,15 +1,15 @@
-# MacNotch
+# AgoyNotch
 
 Turn your MacBook's hardware camera notch into a Dynamic Island–style interactive surface.
 
-MacNotch sits flush under the real notch as a thin, nearly invisible pill. When media is
+AgoyNotch sits flush under the real notch as a thin, nearly invisible pill. When media is
 playing it shows a tiny album-art thumbnail and an animated audio-bars indicator. Hover the
 notch and it expands downward with a spring animation into a Now Playing panel — album art,
 title, artist, and prev / play-pause / next transport controls — then collapses when you move
 away. It is a native macOS app written in Swift (AppKit + SwiftUI), with **no third-party
 dependencies**.
 
-> **Why this exists:** closed-source "notch" utilities ask you to trust a binary. MacNotch is
+> **Why this exists:** closed-source "notch" utilities ask you to trust a binary. AgoyNotch is
 > the opposite — the entire source is here, it makes **no network calls** and collects **no
 > telemetry**. Everything runs locally on your Mac.
 
@@ -42,12 +42,26 @@ This is a Swift Package Manager **executable** package (text-only `Package.swift
 2. Select the **My Mac** run destination.
 3. Press **Run** (⌘R).
 
-The app launches with **no Dock icon**. Look for the MacNotch icon in the **menu bar**, and for
+The app launches with **no Dock icon**. Look for the AgoyNotch icon in the **menu bar**, and for
 the pill under your notch.
+
+## Adjusting the notch
+
+AgoyNotch auto-detects your hardware notch geometry and anchors the overlay flush under it.
+On some Macs the overlay can sit a hair off from the physical notch, so you can fine-tune it
+from the **menu bar → Adjust Notch** submenu:
+
+- **Move Left** / **Move Right** — shift the overlay horizontally (±2 pt per click).
+- **Move Down** / **Move Up** — nudge the overlay vertically from the top edge (±2 pt).
+- **Wider** / **Narrower** — grow or shrink the collapsed pill's width (±2 pt).
+- **Reset Position** — clear all adjustments back to the pure auto-detected geometry.
+
+Each click repositions the overlay immediately, and your adjustments are **saved and restored
+across launches** (stored locally in `UserDefaults` — no network, no telemetry).
 
 ## Permissions & signing
 
-MacNotch reads Now Playing information through Apple's **private** `MediaRemote` framework,
+AgoyNotch reads Now Playing information through Apple's **private** `MediaRemote` framework,
 loaded at runtime with `dlopen`/`dlsym`. Because of that:
 
 - **Run it locally from Xcode** (or sign it ad-hoc). The App Sandbox blocks loading private
@@ -62,7 +76,7 @@ loaded at runtime with `dlopen`/`dlsym`. Because of that:
 
 ## App Store note
 
-Because MacNotch uses a **private Apple framework**, it is **not eligible for the Mac App
+Because AgoyNotch uses a **private Apple framework**, it is **not eligible for the Mac App
 Store**. For distribution outside the store, notarize the signed app; for personal use, running
 straight from Xcode is enough.
 
@@ -70,12 +84,12 @@ straight from Xcode is enough.
 
 - **No network calls.** There is no `URLSession`, no sockets, nothing phones home.
 - **No telemetry.** Nothing is logged off-device.
-- **Fully local & transparent.** The only system component MacNotch talks to is the on-device
+- **Fully local & transparent.** The only system component AgoyNotch talks to is the on-device
   media daemon, via the open source in this repository.
 
 ## How to quit
 
-Click the **MacNotch menu-bar icon → Quit MacNotch** (⌘Q while the menu is open).
+Click the **AgoyNotch menu-bar icon → Quit AgoyNotch** (⌘Q while the menu is open).
 
 ## Roadmap
 
@@ -91,13 +105,14 @@ these can be added as additional "modes" of the notch surface:
 ## Project layout
 
 ```
-MacNotch/
+AgoyNotch/
   Package.swift                       SPM manifest (macOS 15 target, one executable target)
   README.md
   .gitignore
-  Sources/MacNotch/
-    MacNotchApp.swift                 @main; NSApplicationDelegateAdaptor → AppDelegate
-    AppDelegate.swift                 accessory policy, object graph, menu-bar item + Quit
+  Sources/AgoyNotch/
+    AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate
+    AppDelegate.swift                 accessory policy, object graph, menu-bar item + Adjust/Quit
+    NotchSettings.swift               persisted manual offsets (UserDefaults) over auto-geometry
     NotchWindow.swift                 borderless non-activating NSPanel + hover tracking area
     NotchWindowController.swift       notch geometry + placement + resize on expand/collapse
     NotchViewModel.swift              expand/collapse state, hover debounce, panel sizes

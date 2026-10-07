@@ -5,7 +5,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "MacNotch",
+    name: "AgoyNotch",
     // Deployment target macOS 15.0: every API this app uses (NSPanel, NSVisualEffectView,
     // NSScreen.safeAreaInsets / auxiliaryTopLeftArea / auxiliaryTopRightArea, SwiftUI,
     // dlopen/dlsym, UnevenRoundedRectangle) has existed since macOS 12–13, so this builds
@@ -14,11 +14,11 @@ let package = Package(
         .macOS(.v15)
     ],
     targets: [
-        // A single executable target. The target name "MacNotch" matches the source
-        // directory Sources/MacNotch. No third-party dependencies — everything is local-only.
+        // A single executable target. The target name "AgoyNotch" matches the source
+        // directory Sources/AgoyNotch. No third-party dependencies — everything is local-only.
         .executableTarget(
-            name: "MacNotch",
-            path: "Sources/MacNotch"
+            name: "AgoyNotch",
+            path: "Sources/AgoyNotch"
         )
     ]
 )

@@ -1,6 +1,6 @@
 //
 //  NotchView.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  The SwiftUI surface rendered inside the notch panel. It morphs between a thin collapsed
 //  pill hugging the real notch and an expanded Dynamic-Island-style Now Playing panel.

@@ -1,6 +1,6 @@
 //
 //  NowPlayingInfo.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  Plain, UI-agnostic data model describing the current Now Playing state.
 //  Populated by NowPlayingManager from the private MediaRemote framework and

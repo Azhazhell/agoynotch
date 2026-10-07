@@ -1,6 +1,6 @@
 //
 //  VisualEffectView.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  Thin SwiftUI wrapper around NSVisualEffectView so the expanded notch panel can place a
 //  frosted-glass backdrop behind its content.

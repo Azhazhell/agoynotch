@@ -1,6 +1,6 @@
 //
 //  NotchViewModel.swift
-//  MacNotch
+//  AgoyNotch
 //
 //  UI state for the notch surface: collapsed vs. expanded, hover handling with a short
 //  open/close debounce, and the collapsed/expanded panel sizes the window controller needs.
