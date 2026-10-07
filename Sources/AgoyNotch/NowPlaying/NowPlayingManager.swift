@@ -8,14 +8,37 @@
 //
 //  Local-only: this talks solely to the on-device media daemon. No network, no telemetry.
 //
+//  Concurrency / isolation
+//  ------------------------
+//  This type is `@MainActor`-isolated. It is a UI-facing `ObservableObject` whose
+//  `@Published info` drives SwiftUI, so every mutation of `info` must happen on the main
+//  actor anyway. Making the whole class main-actor-isolated states that invariant to the
+//  compiler, so under Swift 6 strict concurrency (which tools-version 6.0 can enforce even
+//  under language mode v5) the data-race diagnostics disappear WITHOUT leaning on the
+//  language-mode setting:
+//
+//    • The MediaRemote fetch completion is delivered on an arbitrary background queue, so
+//      it must NOT touch `self` directly. We parse the dictionary into a pure
+//      `NowPlayingInfo` value first (no `self`), then hop to the main actor exactly once
+//      via `Task { @MainActor in … }` to assign `info`. `self` is captured weakly and the
+//      mutation is main-actor-isolated, so there is no "Sending 'self' risks a data race".
+//    • NotificationCenter observer blocks are `@Sendable`. We therefore capture nothing
+//      non-Sendable in them: each block hops to the main actor and calls `refresh()` there.
+//    • The follow-up refresh delay also hops to the main actor before touching `self`.
+//
 
 import AppKit
 import Combine
 
 /// Fetches and publishes the system Now Playing state and forwards transport commands.
+///
+/// Main-actor-isolated: its `@Published info` feeds SwiftUI, and all call sites
+/// (`AppDelegate` launch/terminate delegate methods, `NotchViewModel`, `NotchView`
+/// transport buttons) already run on the main actor.
+@MainActor
 final class NowPlayingManager: ObservableObject {
 
-    /// The latest Now Playing snapshot. Starts empty and updates on the main thread.
+    /// The latest Now Playing snapshot. Starts empty and updates on the main actor.
     @Published private(set) var info: NowPlayingInfo = .empty
 
     private let bridge = MediaRemoteBridge()
@@ -33,16 +56,19 @@ final class NowPlayingManager: ObservableObject {
         bridge.registerForNotifications(on: .main)
 
         let center = NotificationCenter.default
-        let handler: (Notification) -> Void = { [weak self] _ in self?.refresh() }
 
-        notificationObservers.append(
-            center.addObserver(forName: MediaRemoteBridge.infoDidChangeNotification,
-                               object: nil, queue: .main) { note in handler(note) }
-        )
-        notificationObservers.append(
-            center.addObserver(forName: MediaRemoteBridge.isPlayingDidChangeNotification,
-                               object: nil, queue: .main) { note in handler(note) }
-        )
+        // The observer block is `@Sendable`; capture only a weak `self` (Sendable) and hop
+        // to the main actor before calling the main-actor-isolated `refresh()`. We do NOT
+        // capture a non-Sendable local closure here, which is what previously tripped the
+        // "non-Sendable capture in a @Sendable closure" warning.
+        let observe: (Notification.Name) -> NSObjectProtocol = { [weak self] name in
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in self?.refresh() }
+            }
+        }
+
+        notificationObservers.append(observe(MediaRemoteBridge.infoDidChangeNotification))
+        notificationObservers.append(observe(MediaRemoteBridge.isPlayingDidChangeNotification))
 
         refresh()
     }
@@ -56,20 +82,24 @@ final class NowPlayingManager: ObservableObject {
     }
 
     deinit {
+        // Under Swift's isolated synchronous `deinit` (SE-0371, standard in the Xcode 27
+        // toolchain), a global-actor-isolated class gets a main-actor-isolated `deinit`,
+        // so it may touch the main-actor-isolated, non-Sendable `notificationObservers` /
+        // `bridge` and call `stop()` directly — the runtime hops to the main actor first.
         stop()
     }
 
     // MARK: - Refresh
 
-    /// Pull the latest info dictionary and republish `info` on the main thread.
+    /// Pull the latest info dictionary and republish `info` on the main actor.
     func refresh() {
         // Fetch the info dict on a background queue so artwork decoding stays off main.
+        // The completion runs on `workQueue`, so it must not touch `self` directly: parse
+        // the dictionary into a pure value first, then hop to the main actor once to assign.
         bridge.fetchNowPlayingInfo(on: workQueue) { [weak self] dict in
-            guard let self else { return }
-
             // Empty dict → nothing playing (also the macOS 15.4+ entitlement fallback).
             guard !dict.isEmpty else {
-                DispatchQueue.main.async { self.info = .empty }
+                Task { @MainActor in self?.info = .empty }
                 return
             }
 
@@ -95,7 +125,8 @@ final class NowPlayingManager: ObservableObject {
                 isPlaying: isPlaying
             )
 
-            DispatchQueue.main.async { self.info = snapshot }
+            // Hop to the main actor exactly once to publish the parsed snapshot.
+            Task { @MainActor in self?.info = snapshot }
         }
     }
 
@@ -122,7 +153,11 @@ final class NowPlayingManager: ObservableObject {
     }
 
     private func scheduleFollowUpRefresh() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        // Main-actor-safe delay: the task body runs on the main actor, so touching `self`
+        // (and calling the main-actor-isolated `refresh()`) is race-free. `self` is weak so
+        // a pending follow-up never keeps the manager alive.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
             self?.refresh()
         }
     }

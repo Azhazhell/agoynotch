@@ -11,6 +11,14 @@ import AppKit
 import Combine
 
 /// Observable UI state driving the notch overlay.
+///
+/// Main-actor-isolated: it is a UI `ObservableObject` and it holds the main-actor-isolated
+/// `NowPlayingManager`, so keeping the view model on the main actor lets it construct the
+/// manager, subscribe to its `objectWillChange`, and (indirectly, through `NotchView`)
+/// drive its transport methods without any cross-actor hops. All call sites —
+/// `AppDelegate`'s launch delegate method and `NotchWindowController` (both AppKit
+/// `@MainActor`) — already run on the main actor.
+@MainActor
 final class NotchViewModel: ObservableObject {
 
     /// Whether the panel is currently expanded into the Now Playing panel.
@@ -37,8 +45,10 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Private
 
-    /// Pending collapse work item, cancelled whenever the cursor re-enters.
-    private var pendingCollapse: DispatchWorkItem?
+    /// Pending collapse task, cancelled whenever the cursor re-enters. A `Task` (rather than
+    /// a `DispatchWorkItem`) keeps the delayed body main-actor-isolated, so mutating
+    /// `isExpanded` from it is race-free under strict concurrency.
+    private var pendingCollapse: Task<Void, Never>?
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -72,7 +82,9 @@ final class NotchViewModel: ObservableObject {
             pendingCollapse?.cancel()
             pendingCollapse = nil
             if !isExpanded {
-                withAnimationIfNeeded { self.isExpanded = true }
+                // Already main-actor-isolated, so mutate directly. The spring animation is
+                // applied in the SwiftUI view via `.animation(_:value:)`.
+                isExpanded = true
             }
         } else {
             scheduleCollapse()
@@ -81,22 +93,16 @@ final class NotchViewModel: ObservableObject {
 
     private func scheduleCollapse() {
         pendingCollapse?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.withAnimationIfNeeded { self.isExpanded = false }
+        // Capture the delay as a plain value so the task body does not need `self` before
+        // the weak-self unwrap below.
+        let debounceNanos = UInt64(collapseDebounce * 1_000_000_000)
+        pendingCollapse = Task { @MainActor [weak self] in
+            // Debounce the collapse. If the cursor re-enters, `hoverChanged` cancels this
+            // task before the sleep returns and we bail out.
+            try? await Task.sleep(nanoseconds: debounceNanos)
+            guard !Task.isCancelled, let self else { return }
+            self.isExpanded = false
             self.pendingCollapse = nil
-        }
-        pendingCollapse = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + collapseDebounce, execute: work)
-    }
-
-    /// Mutate state on the main thread. The spring animation itself is applied in the
-    /// SwiftUI view via `.animation(_:value:)`; this just guarantees main-thread mutation.
-    private func withAnimationIfNeeded(_ mutate: @escaping () -> Void) {
-        if Thread.isMainThread {
-            mutate()
-        } else {
-            DispatchQueue.main.async(execute: mutate)
         }
     }
 }
