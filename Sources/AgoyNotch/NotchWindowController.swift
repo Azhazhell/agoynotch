@@ -2,11 +2,11 @@
 //  NotchWindowController.swift
 //  AgoyNotch
 //
-//  Measures the hardware notch geometry and positions the floating panel flush under it.
-//  Recomputes on display reconfiguration. The window is a FIXED expanded size and never
-//  resizes on collapse/expand — the collapsed↔expanded morph is a SwiftUI spring drawn
-//  inside the window (see NotchViewModel.windowSize / NotchView). This controller only ever
-//  places the window under the notch and layers the user's manual adjustments on top.
+//  Measures the hardware notch and places the fixed-size overlay window so its TOP edge is
+//  the physical top of the screen (`screen.frame.maxY`), centered on the notch. Repositions
+//  live when a geometry setting changes or the display configuration changes. The window
+//  never resizes on expand/collapse — the grow-out-of-the-notch morph is pure SwiftUI
+//  inside the window (see NotchView).
 //
 //  Note on coordinates: AppKit's screen origin is bottom-left, so the TOP edge of a screen
 //  is `frame.maxY` and a top-anchored window's origin.y is `frame.maxY - windowHeight`.
@@ -19,32 +19,29 @@ import SwiftUI
 final class NotchWindowController: NSWindowController {
 
     private let viewModel: NotchViewModel
+    private let settings: AppSettings
     private let hostingView: NotchHostingView
 
-    /// Combine subscriptions (currently the `isExpanded` observation that rebuilds the
-    /// hover tracking area). Held so they stay alive for the controller's lifetime.
+    /// Combine subscriptions (expand/collapse → tracking; geometry settings → reposition).
     private var cancellables = Set<AnyCancellable>()
 
-    /// User fine-tuning (horizontal/vertical offset + width/height adjustment) layered on
-    /// top of the auto-detected notch geometry. Loaded from UserDefaults; updated live from
-    /// the menu-bar "Adjust Notch" commands via `applySettings(_:)`.
-    private var settings = NotchSettings()
+    /// Notch size used on Macs without a hardware notch.
+    private static let fallbackNotchSize = CGSize(width: 200, height: 32)
 
-    /// Fallback collapsed size for Macs without a hardware notch.
-    private let fallbackCollapsedSize = CGSize(width: 220, height: 32)
+    /// Observer token. `nonisolated(unsafe)` because the nonisolated `deinit` reads it; it is
+    /// written once in `init` and only read again in `deinit`, so there is no race.
+    nonisolated(unsafe) private var screenParamsObserver: NSObjectProtocol?
 
-    private var screenParamsObserver: NSObjectProtocol?
-
-    init(viewModel: NotchViewModel) {
+    init(viewModel: NotchViewModel, settings: AppSettings) {
         self.viewModel = viewModel
+        self.settings = settings
 
-        // Build the hosting view + panel.
-        let rootView = NotchView(viewModel: viewModel)
-        let hosting = NotchHostingView(rootView: rootView)
+        let hosting = NotchHostingView(rootView: NotchView(viewModel: viewModel))
+        // The SwiftUI content must never drive the window size: the window is resized only
+        // by `positionWindow()` when a geometry setting changes.
+        hosting.sizingOptions = []
         self.hostingView = hosting
 
-        // Create the window at its permanent (expanded) size. `positionWindow` will place
-        // it under the notch; it never resizes the window afterwards.
         let panel = NotchWindow(
             contentRect: NSRect(origin: .zero, size: viewModel.windowSize),
             hostingView: hosting
@@ -57,72 +54,29 @@ final class NotchWindowController: NSWindowController {
             viewModel?.hoverChanged(isInside)
         }
 
-        // DRAWING / CLICKS ↔ HOVER are DECOUPLED. The window is permanently the expanded
-        // size; the hosting view uses two independent providers:
-        //   • `trackingRectProvider`  → where the NSTrackingArea listens for hover.
-        //   • `interactiveRectProvider`→ where `hitTest` swallows clicks (else they pass
-        //                                 through to the desktop / menu bar / other apps).
-        // NSTrackingArea and hitTest are independent in AppKit, so hover can fire at points
-        // where hitTest returns `nil`. We exploit that: while collapsed the overlay paints
-        // NOTHING and swallows NO clicks, yet it still TRACKS hover over the physical notch.
-        //
-        // (See `topCenteredRect(width:height:in:)` for the shared geometry helper.)
-        //
-        // HOVER-TRACKING rect. This geometry is UNCHANGED from before and is what keeps both
-        // prior hover bugs fixed:
-        //  • COLLAPSED → the small notch-sized rect at the top center (NOT the whole
-        //    window). Entering the real notch fires `mouseEntered`; the cursor anywhere else
-        //    over the big transparent window does NOT expand (phantom-expand fix). The rect
-        //    stays here EVEN THOUGH collapsed now paints nothing — hover is decoupled from
-        //    drawing.
-        //  • EXPANDED → the full grown panel, which now starts flush at the TOP (no gap),
-        //    so the tracked region is simply the panel's whole rect (expandedSize) anchored
-        //    at the top. This lets the cursor travel from the notch down onto the transport
-        //    buttons without leaving the region (move-to-buttons fix).
+        // HOVER rect (see NotchHostingView.trackingRectProvider):
+        //  • COLLAPSED → only the hover zone over the notch (Settings → Hover area).
+        //  • EXPANDED  → the whole panel (plus the hover zone, in case it is offset below
+        //    the panel), so the cursor can reach the transport buttons.
         hosting.trackingRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
-            if viewModel.isExpanded {
-                return Self.topCenteredRect(
-                    width: viewModel.expandedSize.width,
-                    height: viewModel.expandedSize.height,
-                    in: hosting
-                )
-            } else {
-                return Self.topCenteredRect(
-                    width: viewModel.collapsedSize.width,
-                    height: viewModel.collapsedSize.height,
-                    in: hosting
-                )
-            }
-        }
-
-        // CLICK HIT-TEST rect — independent of the tracking rect above.
-        //  • COLLAPSED → `.zero` (empty). The overlay paints nothing, so clicks over the
-        //    invisible notch region pass straight through (`hitTest` returns `nil`). Hover
-        //    still works because it uses `trackingRectProvider`, not this.
-        //  • EXPANDED → the full grown panel (flush at the top), so clicks hit the buttons.
-        hosting.interactiveRectProvider = { [weak viewModel, weak hosting] in
-            guard let viewModel, let hosting else { return nil }
-            guard viewModel.isExpanded else {
-                return .zero // collapsed paints nothing → swallow no clicks (pass through)
-            }
-            return Self.topCenteredRect(
-                width: viewModel.expandedSize.width,
-                height: viewModel.expandedSize.height,
+            let hoverRect = Self.topCenteredRect(
+                viewModel.hoverSize,
+                topInset: CGFloat(viewModel.settings.hoverVerticalOffset),
                 in: hosting
             )
+            guard viewModel.isExpanded else { return hoverRect }
+            return Self.topCenteredRect(viewModel.panelSize, in: hosting).union(hoverRect)
         }
 
-        // Rebuild the hover tracking area whenever the panel toggles between collapsed and
-        // expanded. The tracked rect follows the interactive region: the small pill over the
-        // notch while collapsed, the full grown panel while expanded (see
-        // `NotchHostingView.updateTrackingAreas`). Without this the collapsed tracking rect
-        // would never grow and the cursor would leave it as soon as the panel expanded.
-        //
-        // `viewModel` is @MainActor and `$isExpanded` publishes on the main actor (it is
-        // only mutated there), and `receive(on:)` guarantees the AppKit call runs on main.
-        // `[weak hosting]` avoids a retain cycle (the controller owns `hosting`, which — via
-        // its providers — would otherwise capture the controller/view model strongly).
+        // CLICK rect: nothing while collapsed (clicks pass through), the panel while expanded.
+        hosting.interactiveRectProvider = { [weak viewModel, weak hosting] in
+            guard let viewModel, let hosting else { return nil }
+            guard viewModel.isExpanded else { return .zero }
+            return Self.topCenteredRect(viewModel.panelSize, in: hosting)
+        }
+
+        // Swap the tracked rect between hover zone and panel on every expand/collapse.
         viewModel.$isExpanded
             .receive(on: RunLoop.main)
             .sink { [weak hosting] _ in
@@ -130,14 +84,36 @@ final class NotchWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
-        // Reposition whenever the display configuration changes (resolution, arrangement,
-        // a display plugged/unplugged, etc.).
+        // Re-apply geometry LIVE when any geometry setting changes. `@Published` emits on
+        // willSet (before the new value is stored); `receive(on:)` defers the sink to the
+        // next run-loop pass, so `positionWindow()` reads the NEW values.
+        let geometryChanges: [AnyPublisher<Void, Never>] = [
+            settings.$hoverWidth.map { _ in () }.eraseToAnyPublisher(),
+            settings.$hoverHeight.map { _ in () }.eraseToAnyPublisher(),
+            settings.$hoverVerticalOffset.map { _ in () }.eraseToAnyPublisher(),
+            settings.$horizontalOffset.map { _ in () }.eraseToAnyPublisher(),
+            settings.$panelWidth.map { _ in () }.eraseToAnyPublisher(),
+            settings.$panelHeight.map { _ in () }.eraseToAnyPublisher(),
+        ]
+        // (Each @Published also replays its current value on subscribe; that just triggers
+        // one harmless extra positionWindow() right after launch.)
+        Publishers.MergeMany(geometryChanges)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.positionWindow()
+            }
+            .store(in: &cancellables)
+
+        // Reposition when the display configuration changes. The observer block is
+        // @Sendable, so hop to the main actor instead of calling positionWindow() directly.
         screenParamsObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.positionWindow(animated: false)
+            Task { @MainActor in
+                self?.positionWindow()
+            }
         }
     }
 
@@ -154,19 +130,17 @@ final class NotchWindowController: NSWindowController {
 
     // MARK: - Geometry
 
-    /// The top-centered rect, in the hosting view's coordinate space, that spans the given
-    /// on-screen `width` × `height`. The hosting view is NOT flipped (AppKit default origin
-    /// bottom-left) while the SwiftUI content is drawn top-anchored, so the rect hugs the
-    /// TOP edge; we pick `maxY`/`minY` by `isFlipped` to stay correct regardless of
-    /// NSHostingView's flip convention. Shared by the tracking- and hit-test-rect providers.
-    private static func topCenteredRect(width: CGFloat,
-                                        height: CGFloat,
+    /// A `size` rect, horizontally centered and hugging the TOP edge of the hosting view
+    /// (optionally `topInset` points below it), in the hosting view's coordinates. Handles
+    /// both flipped and non-flipped hosting views.
+    private static func topCenteredRect(_ size: CGSize,
+                                        topInset: CGFloat = 0,
                                         in hosting: NotchHostingView) -> CGRect {
         let full = hosting.bounds
-        let w = min(width, full.width)
-        let h = min(height, full.height)
+        let w = min(size.width, full.width)
+        let h = min(size.height, full.height)
         let x = full.midX - w / 2
-        let y = hosting.isFlipped ? full.minY : full.maxY - h
+        let y = hosting.isFlipped ? full.minY + topInset : full.maxY - topInset - h
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
@@ -175,124 +149,64 @@ final class NotchWindowController: NSWindowController {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
     }
 
-    /// Measures the collapsed pill size from the notch geometry (or fallback), then applies
-    /// the user's `widthAdjustment` and `heightAdjustment` on top. Both dimensions are
-    /// clamped to a small positive minimum so over-aggressive "Narrower"/"Shorter" cannot
-    /// collapse the shape to zero/negative size.
-    ///
-    /// Width comes from the gap between the two auxiliary top areas (the physical notch
-    /// width); we add a little slack so a small music glyph fits just LEFT of the notch and
-    /// the equalizer just RIGHT of it, so the collapsed shape hugs the notch while leaving
-    /// room for the two indicators. Height comes from `safeAreaInsets.top` (the notch
-    /// height / menu-bar strip) so the black shape coincides with the real notch's height
-    /// instead of adding a second shape beneath it.
-    private func measuredCollapsedSize(for screen: NSScreen?) -> CGSize {
-        // Extra width (points) added to the bare notch width. Kept SMALL so the collapsed
-        // shape overlays the physical notch rather than forming a wider black bar beneath
-        // it (the "strip below the notch" look the user complained about). The glyph and
-        // equalizer live just inside the left/right of this near-notch-width shape. Tunable
-        // via the Wider/Narrower menu for the user's exact hardware (default ~8pt slack).
-        let indicatorSlack: CGFloat = 8
-
-        let base: CGSize
-        if let screen, screen.safeAreaInsets.top > 0 {
-            let left = screen.auxiliaryTopLeftArea?.width ?? 0
-            let right = screen.auxiliaryTopRightArea?.width ?? 0
-            // Notch width = full screen width minus the usable areas either side of it.
-            let notchWidth = screen.frame.width - left - right
-            let notchHeight = screen.safeAreaInsets.top
-            // Guard against degenerate measurements.
-            base = (notchWidth > 0 && notchHeight > 0)
-                ? CGSize(width: notchWidth + indicatorSlack, height: notchHeight)
-                : fallbackCollapsedSize
-        } else {
-            base = fallbackCollapsedSize
-        }
-
-        let adjustedWidth = max(1, base.width + settings.widthAdjustment)
-        // heightAdjustment lets the user make the collapsed black shape exactly cover their
-        // real notch's vertical extent when safeAreaInsets.top is a hair off.
-        let adjustedHeight = max(1, base.height + settings.heightAdjustment)
-        return CGSize(width: adjustedWidth, height: adjustedHeight)
+    /// The bare hardware notch size: width = screen width minus the usable menu-bar areas
+    /// either side of the notch; height = the top safe-area inset. No slack, no adjustments.
+    private func measuredNotchSize(for screen: NSScreen?) -> CGSize {
+        guard let screen, screen.safeAreaInsets.top > 0 else { return Self.fallbackNotchSize }
+        let left = screen.auxiliaryTopLeftArea?.width ?? 0
+        let right = screen.auxiliaryTopRightArea?.width ?? 0
+        let width = screen.frame.width - left - right
+        let height = screen.safeAreaInsets.top
+        guard width > 0, height > 0 else { return Self.fallbackNotchSize }
+        return CGSize(width: width, height: height)
     }
 
     // MARK: - Placement
 
-    /// Positions the FIXED-SIZE panel under the notch (or top-center on non-notch Macs).
-    ///
-    /// The window is always the expanded size (`viewModel.windowSize`) — it never resizes
-    /// when the panel expands or collapses. That fixed, top-anchored frame is what keeps the
-    /// hover tracking area covering the whole interactive area (see `NotchWindow` /
-    /// `NotchHostingView` and `viewModel.windowSize` for the full rationale). This method is
-    /// therefore only about PLACEMENT, not sizing-on-state-change.
-    func positionWindow(animated: Bool) {
+    /// Sizes and places the window: top edge at `screen.frame.maxY` (the physical top of
+    /// the display — `frame`, never `visibleFrame`, which stops below the menu bar),
+    /// centered on the notch plus the horizontal offset. There is deliberately no vertical
+    /// offset for the window: moving it down would re-create the gap under the notch.
+    func positionWindow() {
         guard let window else { return }
         let screen = notchScreen()
 
-        // Update the view model's collapsed size from the real measurement so the SwiftUI
-        // pill (drawn inside the fixed window) hugs the notch exactly. widthAdjustment is
-        // baked in here and only affects the drawn pill, not the window frame.
-        let collapsed = measuredCollapsedSize(for: screen)
-        viewModel.updateCollapsedSize(collapsed)
+        // 1. Measure. Assign only on change: the assignment fires objectWillChange and we do
+        //    not want redundant redraws (measuredNotchSize is not a geometry trigger, so
+        //    there is no feedback loop either way).
+        let notch = measuredNotchSize(for: screen)
+        if settings.measuredNotchSize != notch {
+            settings.measuredNotchSize = notch
+        }
 
-        // The window is always the expanded size.
+        // 2. Size (depends on the measured notch through the hover size).
         let size = viewModel.windowSize
         guard let screenFrame = screen?.frame else {
             window.setContentSize(size)
+            hostingView.refreshTracking()
             return
         }
 
-        // Start from the auto-detected placement: horizontally centered on the notch and
-        // pinned to the TOP edge of the screen (maxY in AppKit's bottom-left coordinate
-        // space; a top-anchored window of height H therefore has origin.y = maxY - H).
-        // Because the window is the expanded width, centering it on the notch also centers
-        // the collapsed shape (which SwiftUI draws top-centered inside the window), and
-        // because the window top is exactly screen-top, the top-anchored collapsed shape's
-        // top edge lands at the physical top of the display — flush over the hardware notch
-        // rather than below it.
-        //
-        // Default offsets are all 0 (see NotchSettings) precisely so this auto-detected
-        // placement already sits the collapsed shape ON the notch; the user only needs tiny
-        // Move/Wider/Taller nudges to perfect the seam on their specific hardware.
-        var originX = screenFrame.midX - size.width / 2
-        var originY = screenFrame.maxY - size.height
+        // 3. Place: top edge = screen top. NotchWindow.constrainFrameRect keeps AppKit from
+        //    pushing it below the menu bar.
+        let originX = screenFrame.midX - size.width / 2 + CGFloat(settings.horizontalOffset)
+        let originY = screenFrame.maxY - size.height
+        window.setFrame(NSRect(x: originX, y: originY, width: size.width, height: size.height),
+                        display: true)
 
-        // Layer the user's manual adjustments on top of the auto-detected placement.
-        //  • horizontalOffset: positive moves the overlay right, so add directly to X.
-        //  • verticalOffset: positive nudges the overlay DOWN. Because AppKit's origin is
-        //    bottom-left, moving down means DECREASING originY, so we subtract it.
-        // These shift the WHOLE fixed-size overlay so it lines up with the real notch;
-        // width/heightAdjustment are handled separately in `measuredCollapsedSize` (they
-        // tune the drawn collapsed shape, and heightAdjustment also feeds the notch inset /
-        // window height via viewModel.windowSize — which is why updateCollapsedSize above
-        // runs before we read `size`).
-        originX += settings.horizontalOffset
-        originY -= settings.verticalOffset
-
-        let frame = NSRect(x: originX, y: originY, width: size.width, height: size.height)
-        // Never animate the frame: the window size is constant, so there is nothing to
-        // animate here. The collapsed↔expanded morph is a SwiftUI spring inside the window.
-        window.setFrame(frame, display: true, animate: false)
-
-        // The collapsed size may have changed above (measurement or a Wider/Taller nudge),
-        // which changes the collapsed interactive rect. Rebuild the hover tracking area so
-        // the tracked pill matches the newly drawn collapsed shape.
+        // 4. The hover zone / panel rects may have changed.
         hostingView.refreshTracking()
+
+        #if DEBUG
+        print("[AgoyNotch] screen.maxY=\(screenFrame.maxY) window.maxY=\(window.frame.maxY) "
+              + "notch=\(notch) safeArea.top=\(screen?.safeAreaInsets.top ?? 0) "
+              + "hosting.safeAreaInsets.top=\(hostingView.safeAreaInsets.top)")
+        #endif
     }
 
     /// Shows the panel and performs the initial placement.
     func show() {
-        positionWindow(animated: false)
+        positionWindow()
         window?.orderFrontRegardless()
-    }
-
-    // MARK: - Manual adjustment
-
-    /// Replace the current adjustment settings and immediately reposition the window so the
-    /// change is visible as the user taps a menu item. The caller (AppDelegate) owns the
-    /// `NotchSettings` value, mutates it, persists it, and hands the new value here.
-    func applySettings(_ newSettings: NotchSettings) {
-        settings = newSettings
-        positionWindow(animated: false)
     }
 }

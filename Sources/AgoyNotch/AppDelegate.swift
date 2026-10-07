@@ -2,38 +2,40 @@
 //  AppDelegate.swift
 //  AgoyNotch
 //
-//  Wires the app together at launch: hides the Dock icon (accessory activation policy),
-//  builds the Now Playing service → view model → window controller chain, shows the notch
-//  panel, and installs the menu-bar status item with a Quit command. The collapsed↔expanded
-//  morph is a SwiftUI spring inside a fixed-size window, so there is no resize to bridge.
+//  Wires the app together at launch: menu-bar-only (accessory) activation policy, the
+//  AppSettings → Now Playing → view model → notch window chain, and the status item
+//  (About / Settings… / Quit). "Opening the app" shows the Settings window: on launch
+//  (unless turned off in Settings), whenever the user opens AgoyNotch again while it is
+//  already running (reopen), from the status item, and via ⌘, in the app menu.
 //
 
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Strong references so none of these are deallocated while the app runs.
+    private var settings: AppSettings!
     private var nowPlaying: NowPlayingManager!
     private var viewModel: NotchViewModel!
     private var windowController: NotchWindowController!
     private var statusItem: NSStatusItem!
 
-    /// Manual notch adjustments, loaded from UserDefaults at launch. Each "Adjust Notch"
-    /// menu action mutates this, persists it, and pushes it to the window controller.
-    private var settings = NotchSettings()
-
-    /// Step applied per nudge from the "Adjust Notch" menu, in points.
-    private let adjustStep: CGFloat = 2
+    /// Created on first use and reused afterwards.
+    private var settingsWindowController: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // No Dock icon, no app menu — this is a menu-bar accessory.
+        // No Dock icon by default — this is a menu-bar accessory. The Settings window
+        // temporarily switches to `.regular` while it is open.
         NSApp.setActivationPolicy(.accessory)
 
         // Build the object graph.
+        let settings = AppSettings()
         let nowPlaying = NowPlayingManager()
-        let viewModel = NotchViewModel(nowPlaying: nowPlaying)
-        let windowController = NotchWindowController(viewModel: viewModel)
+        let viewModel = NotchViewModel(nowPlaying: nowPlaying, settings: settings)
+        let windowController = NotchWindowController(viewModel: viewModel, settings: settings)
 
+        self.settings = settings
         self.nowPlaying = nowPlaying
         self.viewModel = viewModel
         self.windowController = windowController
@@ -42,17 +44,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         nowPlaying.start()
         windowController.show()
 
-        // NOTE: the window no longer resizes on expand/collapse. It is permanently the
-        // expanded size (see NotchViewModel.windowSize) so the hover tracking area always
-        // covers the whole interactive panel — the fix for the "panel collapses when the
-        // cursor reaches the transport buttons" bug. The collapsed↔expanded morph is a
-        // SwiftUI spring drawn INSIDE the fixed window, so there is nothing to drive here.
-
         setupStatusItem()
+
+        if settings.showSettingsOnLaunch {
+            showSettings()
+        }
+    }
+
+    /// Called when the user opens AgoyNotch (Finder, Spotlight, Launchpad, `open`) while it
+    /// is already running: LaunchServices re-activates this instance instead of starting a
+    /// second one, so show Settings here.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         nowPlaying?.stop()
+    }
+
+    // MARK: - Settings
+
+    @objc func showSettings() {
+        guard let settings else { return }
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(settings: settings)
+        }
+        settingsWindowController?.present()
     }
 
     // MARK: - Menu bar
@@ -71,12 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         ).target = self
 
-        // "Adjust Notch" submenu — fine-tunes the overlay so it lines up with the real
-        // hardware notch. Each item nudges a persisted offset and repositions live.
         menu.addItem(.separator())
-        let adjustItem = NSMenuItem(title: "Adjust Notch", action: nil, keyEquivalent: "")
-        adjustItem.submenu = makeAdjustSubmenu()
-        menu.addItem(adjustItem)
+        menu.addItem(
+            withTitle: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        ).target = self
 
         menu.addItem(.separator())
         menu.addItem(
@@ -89,83 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusItem = item
     }
 
-    /// Builds the "Adjust Notch" submenu. All items target `self`.
-    private func makeAdjustSubmenu() -> NSMenu {
-        let submenu = NSMenu()
-
-        func add(_ title: String, _ selector: Selector) {
-            submenu.addItem(withTitle: title, action: selector, keyEquivalent: "").target = self
-        }
-
-        add("Move Left", #selector(moveLeft))
-        add("Move Right", #selector(moveRight))
-        add("Move Down", #selector(moveDown))
-        add("Move Up", #selector(moveUp))
-        add("Wider", #selector(makeWider))
-        add("Narrower", #selector(makeNarrower))
-        add("Taller", #selector(makeTaller))
-        add("Shorter", #selector(makeShorter))
-        submenu.addItem(.separator())
-        add("Reset Position", #selector(resetPosition))
-
-        return submenu
-    }
-
-    // MARK: - Adjust Notch actions
-
-    /// Persist the current `settings` and push them to the window controller so the overlay
-    /// moves/resizes immediately. Shared by every adjustment action.
-    private func commitSettings() {
-        settings.save()
-        windowController.applySettings(settings)
-    }
-
-    @objc private func moveLeft() {
-        settings.horizontalOffset -= adjustStep
-        commitSettings()
-    }
-
-    @objc private func moveRight() {
-        settings.horizontalOffset += adjustStep
-        commitSettings()
-    }
-
-    @objc private func moveDown() {
-        settings.verticalOffset += adjustStep
-        commitSettings()
-    }
-
-    @objc private func moveUp() {
-        settings.verticalOffset -= adjustStep
-        commitSettings()
-    }
-
-    @objc private func makeWider() {
-        settings.widthAdjustment += adjustStep
-        commitSettings()
-    }
-
-    @objc private func makeNarrower() {
-        settings.widthAdjustment -= adjustStep
-        commitSettings()
-    }
-
-    @objc private func makeTaller() {
-        settings.heightAdjustment += adjustStep
-        commitSettings()
-    }
-
-    @objc private func makeShorter() {
-        settings.heightAdjustment -= adjustStep
-        commitSettings()
-    }
-
-    @objc private func resetPosition() {
-        settings.reset() // resets ALL offsets (horizontal, vertical, width, height) to 0.
-        windowController.applySettings(settings)
-    }
-
     @objc private func showAbout() {
+        // Bring the About panel to the front even though the app is an accessory.
+        NSApp.activate()
         NSApp.orderFrontStandardAboutPanel(nil)
     }
 }

@@ -2,77 +2,85 @@
 
 Turn your MacBook's hardware camera notch into a Dynamic Island–style interactive surface.
 
-AgoyNotch merges with the real hardware notch: when idle the collapsed overlay is a black
-shape anchored to the top of the screen at the notch's height, so it reads as a single
-continuous notch rather than a second box below it. While Apple Music is playing it shows a
-small music glyph just left of the notch and an animated equalizer just right. Hover the
-notch and it expands downward with a spring animation into a Now Playing panel — album art,
-title, artist, and prev / play-pause / next transport controls — then collapses when you move
-away. The expanded panel also carries a second section beside Now Playing: a **live clock
-(ticking every second) and a compact calendar** — a month label, a large current-day number,
-and a one-week strip of weekday letters with today highlighted. It is a native macOS app
-written in Swift (AppKit + SwiftUI), with **no third-party dependencies**.
+When idle AgoyNotch draws **nothing** — you see only your real notch. Move the cursor onto
+the notch and a black panel grows out of it with a spring animation: one continuous black
+shape whose top edge is the very top of the screen (it covers the notch and the menu-bar
+strip beside it), with the content laid out just below the camera cutout. The panel shows
+Apple Music's Now Playing (album art, title, album, artist, prev / play-pause / next) and,
+beside it, a **live clock (ticking every second) and a compact calendar**. Move away and it
+shrinks back into the notch. It is a native macOS app written in Swift (AppKit + SwiftUI),
+with **no third-party dependencies**.
 
 > **Why this exists:** closed-source "notch" utilities ask you to trust a binary. AgoyNotch is
 > the opposite — the entire source is here, it makes **no network calls** and collects **no
 > telemetry**. Everything runs locally on your Mac.
 
 ```
-┌───────────────[ ● notch ● ]───────────────┐   ← collapsed pill hugging the notch
-                      │ hover
-                      ▼
-        ┌───────────────────────────────────────────────┐
-        │  🎵  Song Title        │   12:34:56            │  ← Now Playing (left)
-        │      Artist  ⏮ ⏯ ⏭     │   Aug  7              │    + live clock & calendar (right)
-        │                        │   S M T W T F S        │
-        └───────────────────────────────────────────────┘
+███████████████[   notch   ]███████████████   ← top edge = top of the screen
+█  🎵  Song Title        │   12:34:56       █
+█      Artist  ⏮ ⏯ ⏭     │   Aug  7         █   Now Playing (left) + clock & calendar (right)
+█                        │   S M T W T F S  █
+ ▀██████████████████████████████████████████▀
 ```
-
-*(Screenshot placeholder — add a real capture here once you build and run.)*
 
 ## Requirements
 
-- An Apple Silicon MacBook **with a hardware notch** (e.g. MacBook Air M2, 2022). On Macs
-  without a notch the app still runs and anchors a pill to the top-center of the main display.
-- macOS 15.0 or later. Built and tested against the macOS 27 ("Golden Gate") SDK.
-- Xcode 27.
+- An Apple Silicon MacBook **with a hardware notch** (e.g. MacBook Air M2). On Macs without
+  a notch the panel opens from the top-center of the main display.
+- macOS 15.0 or later. Built against the macOS 27 SDK.
+- Xcode 27 (or its command-line tools, for the build script).
 
-## Build & Run
+## Build the app
 
-This is a Swift Package Manager **executable** package (text-only `Package.swift`, no
-`.xcodeproj`), which opens and builds reliably in Xcode.
+```sh
+./scripts/build-app.sh --install
+```
 
-1. Open the manifest in Xcode:
-   `/projects/sandbox/agoynotch/Package.swift`
-2. Select the **My Mac** run destination.
-3. Press **Run** (⌘R).
+This runs `swift build -c release`, assembles `build/AgoyNotch.app` (binary +
+`Resources/Info.plist`), ad-hoc signs it, copies it to `/Applications` (replacing any old
+copy, quitting a running one first) and opens it. Options:
 
-The app launches with **no Dock icon**. Look for the AgoyNotch icon in the **menu bar**, and for
-the pill under your notch.
+- no flag — only build `build/AgoyNotch.app`
+- `--universal` — build for both arm64 and x86_64
+- `--help` — usage
 
-## Adjusting the notch
+After that, open **AgoyNotch** from Launchpad, Spotlight or `/Applications` like any app.
+It has no Dock icon while idle; it lives in the menu bar.
 
-AgoyNotch auto-detects your hardware notch geometry and anchors the overlay flush under it.
-On some Macs the overlay can sit a hair off from the physical notch, so you can fine-tune it
-from the **menu bar → Adjust Notch** submenu:
+## Opening Settings
 
-- **Move Left** / **Move Right** — shift the overlay horizontally (±2 pt per click).
-- **Move Down** / **Move Up** — nudge the overlay vertically from the top edge (±2 pt).
-- **Wider** / **Narrower** — grow or shrink the collapsed shape's width (±2 pt).
-- **Taller** / **Shorter** — grow or shrink the collapsed shape's height / vertical
-  coverage (±2 pt), so you can make the black overlay exactly cover your real notch.
-- **Reset Position** — clear all adjustments (horizontal, vertical, width, height) back to
-  the pure auto-detected geometry.
+The Settings window opens:
 
-The collapsed overlay is designed to **merge with the hardware notch**: its top edge is
-anchored to the physical top of the display and its height matches the notch height
-(`NSScreen.safeAreaInsets.top`), with flat top corners so it reads as one continuous notch
-rather than a second black box hanging below. A small music glyph sits just left of the
-notch and an animated equalizer just right. If the seam is a hair off on your Mac, use
-**Taller/Shorter** and **Wider/Narrower** to dial it in.
+- when AgoyNotch starts (turn this off with *Show this window when AgoyNotch starts*),
+- whenever you open AgoyNotch again while it is already running (Finder / Spotlight /
+  Launchpad / `open -a AgoyNotch`),
+- from the **menu-bar icon → Settings…**,
+- with **⌘,** while the Settings window is focused.
 
-Each click repositions the overlay immediately, and your adjustments are **saved and restored
-across launches** (stored locally in `UserDefaults` — no network, no telemetry).
+While Settings is open AgoyNotch shows a Dock icon and an app menu; closing the window
+returns it to menu-bar-only. Quit from the **menu-bar icon → Quit AgoyNotch**.
+
+## Settings
+
+Every change is saved (local `UserDefaults`) and applied **immediately** — no restart.
+
+| Setting | Range (default) | What it does |
+|---|---|---|
+| Hover area → Width | 80–400 pt (your notch width) | Width of the invisible zone over the notch that opens the panel. |
+| Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the top of the screen. |
+| Match notch | — | Resets width/height to the detected notch size (shown above the button). |
+| Hover area → Vertical offset | 0–40 pt (0) | Moves only the hover zone down. The panel always starts at the top of the screen. |
+| Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
+| Close delay | 0–2 s, step 0.05 (0.35) | How long after the cursor leaves the panel before it closes. 0 = instant. Coming back earlier keeps it open. |
+| Animation duration | 0–1 s (0.35) | Speed of the grow/shrink spring. 0 = no animation. |
+| Horizontal offset | −150–150 pt (0) | Shifts the panel and hover zone left/right if they are off-center on your Mac. |
+| Panel width / height | 480–800 pt (600) / 180–320 pt (240) | Size of the expanded panel (height includes the band over the notch). |
+| Show this window when AgoyNotch starts | on | Turn off if you use launch at login and don't want the window at every login. |
+| Launch at login | off | Registers AgoyNotch as a login item (`SMAppService`). Only works from the built `.app`; errors are shown inline. |
+| Reset to defaults | — | Restores every value above (except launch at login). |
+
+While collapsed only the hover zone reacts to the cursor; once open, the whole panel does,
+so you can move down to the transport buttons without it closing.
 
 ## Live clock & calendar
 
@@ -102,12 +110,12 @@ the live data source on macOS 27.
   command to Music, macOS shows an **Automation** consent prompt — click **OK / Allow**. You
   can review or re-enable it later under **System Settings → Privacy & Security → Automation**.
   If you deny it, the panel honestly shows **"Nothing playing"** instead of crashing.
-- **Unbundled executable caveat.** Because this ships as a Swift Package Manager executable
-  (no real `.app` bundle / `Info.plist`), the Automation prompt can be flaky or may not persist
-  reliably. The proper fix is to run AgoyNotch as a **bundled, signed `.app`** so macOS can
-  attach the Automation grant to a stable bundle identifier. Until then, every AppleScript call
-  degrades gracefully: if Music isn't running or the script isn't authorized (error `-1743`),
-  AgoyNotch logs a concise message and shows "Nothing playing".
+- **Use the built `.app`.** The Automation grant is attached to the bundle identifier
+  `com.azhazhell.agoynotch`, and the prompt text comes from `NSAppleEventsUsageDescription`
+  in `Resources/Info.plist`. Running the bare executable from Xcode works but the prompt can
+  be flaky there. Because the build script signs ad-hoc, a rebuilt app may be asked again —
+  just allow it (or re-enable it under Automation). If Music isn't running or access is
+  denied (error `-1743`), AgoyNotch logs a short message and shows "Nothing playing".
 - **Graceful behavior.** If Music is stopped, not running, or unauthorized, the panel shows
   "Nothing playing" — it never forces Music to launch just to query it.
 
@@ -120,23 +128,34 @@ back Now Playing data, so on **macOS 27** an unentitled build receives **empty**
 panel always read "Nothing playing". AppleScript to a scriptable player still works, so it is
 now the live source. `MediaRemoteBridge` remains in the tree only to document that path.
 
+## Xcode dev flow
+
+1. Open `Package.swift` in Xcode, select **My Mac**, press **Run** (⌘R).
+2. Debug builds print one geometry line per placement, e.g.
+   `[AgoyNotch] screen.maxY=832.0 window.maxY=832.0 notch=(185.0, 32.0) …` —
+   `window.maxY` must equal `screen.maxY`.
+
+In this flow the app runs as a bare executable, not a bundle: launch at login is disabled,
+and settings are stored under the executable's defaults domain, separate from the bundled
+app's `com.azhazhell.agoynotch`. Use `./scripts/build-app.sh --install` for everyday use.
+
 ## App Store & signing note
 
-Running straight from Xcode on your own Mac is enough for personal use. The dormant
-`MediaRemoteBridge` uses a **private Apple framework**, which is **not eligible for the Mac
-App Store**; for distribution outside the store, notarize a signed, bundled `.app` (which
-also makes the Automation permission for Apple Music persist reliably).
+The build script signs ad-hoc, which is enough for personal use on your own Mac. The
+dormant `MediaRemoteBridge` uses a **private Apple framework**, which is **not eligible for
+the Mac App Store**; to distribute outside the store, sign with a Developer ID and notarize.
 
 ## Privacy
 
 - **No network calls.** There is no `URLSession`, no sockets, nothing phones home.
 - **No telemetry.** Nothing is logged off-device.
-- **Fully local & transparent.** The only system component AgoyNotch talks to is the on-device
-  media daemon, via the open source in this repository.
+- **Fully local & transparent.** The only other app AgoyNotch talks to is Apple Music on
+  your Mac (via AppleScript), using the open source in this repository.
 
 ## How to quit
 
-Click the **AgoyNotch menu-bar icon → Quit AgoyNotch** (⌘Q while the menu is open).
+Click the **AgoyNotch menu-bar icon → Quit AgoyNotch** (⌘Q while the menu is open), or
+⌘Q while the Settings window is focused.
 
 ## Roadmap
 
@@ -156,16 +175,19 @@ AgoyNotch/
   Package.swift                       SPM manifest (macOS 15 target, one executable target)
   README.md
   .gitignore
+  Resources/Info.plist                bundle Info.plist used by the build script
+  scripts/build-app.sh                builds, signs and (optionally) installs AgoyNotch.app
   Sources/AgoyNotch/
-    AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate
-    AppDelegate.swift                 accessory policy, object graph, menu-bar item + Adjust/Quit
-    NotchSettings.swift               persisted manual offsets (UserDefaults) over auto-geometry
-    NotchWindow.swift                 borderless non-activating NSPanel + hover tracking area
-    NotchWindowController.swift       notch geometry + placement + resize on expand/collapse
-    NotchViewModel.swift              expand/collapse state, hover debounce, panel sizes
-    NotchView.swift                   SwiftUI collapsed pill + expanded panel (Now Playing + clock/calendar)
-    ClockCalendarView.swift           right column: live ticking clock + compact calendar (local Date/Calendar)
-    VisualEffectView.swift            NSVisualEffectView frosted-glass backdrop
+    AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate; ⌘, → Settings
+    AppDelegate.swift                 object graph, status item (About / Settings… / Quit), reopen
+    AppSettings.swift                 all user settings (@Published, UserDefaults, live)
+    SettingsView.swift                SwiftUI Settings form
+    SettingsWindowController.swift    Settings NSWindow; .regular while open, .accessory after
+    NotchWindow.swift                 borderless non-activating NSPanel above the menu bar + hover tracking
+    NotchWindowController.swift       notch measurement, placement at the screen top, live re-layout
+    NotchViewModel.swift              expand/collapse state, open/close delays, derived sizes
+    NotchView.swift                   SwiftUI black panel growing out of the notch (Now Playing + clock)
+    ClockCalendarView.swift           right column: live ticking clock + compact calendar
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
       AppleScriptNowPlaying.swift     LIVE source: AppleScript → Apple Music (status + transport)

@@ -9,7 +9,7 @@ import PackageDescription
 
 let package = Package(
     name: "AgoyNotch",
-    // Deployment target macOS 15.0: every API this app uses (NSPanel, NSVisualEffectView,
+    // Deployment target macOS 15.0: every API this app uses (NSPanel, SMAppService,
     // NSScreen.safeAreaInsets / auxiliaryTopLeftArea / auxiliaryTopRightArea, SwiftUI,
     // dlopen/dlsym, UnevenRoundedRectangle) has existed since macOS 12–13, so this builds
     // cleanly on the macOS 27 SDK without any invented macOS-27-only API.
@@ -21,6 +21,8 @@ let package = Package(
         // directory Sources/AgoyNotch. No third-party dependencies — everything is local-only.
         .executableTarget(
             name: "AgoyNotch",
+            // Resources/Info.plist and scripts/build-app.sh live outside this path, so the
+            // target never sees them; the script uses them to assemble AgoyNotch.app.
             path: "Sources/AgoyNotch",
             // Pin the Swift language mode to 5. tools-version 6.0 would otherwise default
             // to the Swift 6 language mode, whose *strict concurrency* checking turns

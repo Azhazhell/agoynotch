@@ -2,11 +2,11 @@
 //  AgoyNotchApp.swift
 //  AgoyNotch
 //
-//  @main entry point. Because AgoyNotch is a menu-bar accessory whose only window is an
-//  AppKit-managed NSPanel (created in AppDelegate), there is no SwiftUI WindowGroup. We use
-//  `@NSApplicationDelegateAdaptor` to hand lifecycle to AppDelegate and a `Settings` scene
-//  with an EmptyView as the body — a Settings scene creates NO visible window on launch for
-//  an `.accessory` app, so nothing extra appears on screen; the notch panel is the only UI.
+//  @main entry point. AgoyNotch's windows (the notch panel and the Settings window) are
+//  AppKit-managed and created in AppDelegate, so there is no SwiftUI WindowGroup. An `App`
+//  needs at least one scene, so we keep an empty `Settings` scene (it opens no window on
+//  launch) and redirect its app-menu "Settings…" command (visible while the Settings
+//  window puts the app in `.regular` mode) to our own AppKit Settings window.
 //
 
 import SwiftUI
@@ -16,9 +16,16 @@ struct AgoyNotchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // No main window — the notch panel is created and managed by AppDelegate.
         Settings {
             EmptyView()
+        }
+        .commands {
+            // Replace SwiftUI's built-in "Settings…" (which would open the empty scene above)
+            // so ⌘, opens the real Settings window.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { appDelegate.showSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
