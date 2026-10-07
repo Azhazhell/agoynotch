@@ -21,7 +21,17 @@ let package = Package(
         // directory Sources/AgoyNotch. No third-party dependencies — everything is local-only.
         .executableTarget(
             name: "AgoyNotch",
-            path: "Sources/AgoyNotch"
+            path: "Sources/AgoyNotch",
+            // Pin the Swift language mode to 5. tools-version 6.0 would otherwise default
+            // to the Swift 6 language mode, whose *strict concurrency* checking turns
+            // ordinary AppKit/Combine patterns (passing `self` into NotificationCenter
+            // observer closures, @escaping C callbacks) into hard errors like
+            // "Sending 'self' risks causing data races". This app is single-UI-thread by
+            // design, so language mode 5 keeps the long-standing, correct behavior while
+            // still letting us use tools-version 6.0 (needed for `.macOS(.v15)`).
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
         )
     ]
 )
