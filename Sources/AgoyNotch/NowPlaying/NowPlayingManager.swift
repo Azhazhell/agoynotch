@@ -42,7 +42,12 @@ final class NowPlayingManager: ObservableObject {
     @Published private(set) var info: NowPlayingInfo = .empty
 
     private let bridge = MediaRemoteBridge()
-    private var notificationObservers: [NSObjectProtocol] = []
+
+    /// Observer tokens are held in a small reference-type box that is NOT actor-isolated,
+    /// so `deinit` (a nonisolated context) can read and clear them without tripping Swift 6
+    /// actor-isolation checks. The box only stores opaque tokens and talks to the
+    /// thread-safe `NotificationCenter`, so touching it off the main actor is safe.
+    private let observerStore = ObserverStore()
 
     /// Background queue used for the MediaRemote fetch callbacks so we never block the UI.
     private let workQueue = DispatchQueue(label: "com.agoynotch.nowplaying", qos: .userInitiated)
@@ -67,26 +72,28 @@ final class NowPlayingManager: ObservableObject {
             }
         }
 
-        notificationObservers.append(observe(MediaRemoteBridge.infoDidChangeNotification))
-        notificationObservers.append(observe(MediaRemoteBridge.isPlayingDidChangeNotification))
+        observerStore.add(observe(MediaRemoteBridge.infoDidChangeNotification))
+        observerStore.add(observe(MediaRemoteBridge.isPlayingDidChangeNotification))
 
         refresh()
     }
 
     /// Stop observing and unregister from the daemon.
     func stop() {
-        let center = NotificationCenter.default
-        notificationObservers.forEach { center.removeObserver($0) }
-        notificationObservers.removeAll()
+        observerStore.removeAll()
         bridge.unregister()
     }
 
     deinit {
-        // Under Swift's isolated synchronous `deinit` (SE-0371, standard in the Xcode 27
-        // toolchain), a global-actor-isolated class gets a main-actor-isolated `deinit`,
-        // so it may touch the main-actor-isolated, non-Sendable `notificationObservers` /
-        // `bridge` and call `stop()` directly — the runtime hops to the main actor first.
-        stop()
+        // `deinit` is a *nonisolated synchronous* context, so it cannot call the
+        // @MainActor-isolated `stop()` directly (that produced the error:
+        // "Call to main actor-isolated instance method 'stop()' in a synchronous
+        // nonisolated context"), nor read the @MainActor-isolated stored properties.
+        // `observerStore` is a plain (non-isolated) reference type, so clearing it here is
+        // allowed from `deinit` and detaches our NotificationCenter observers so the daemon
+        // stops calling back into a deallocated object. We deliberately do NOT touch
+        // `bridge` (its own release handles cleanup).
+        observerStore.removeAll()
     }
 
     // MARK: - Refresh
@@ -159,6 +166,43 @@ final class NowPlayingManager: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
             self?.refresh()
+        }
+    }
+}
+
+// MARK: - ObserverStore
+
+/// A tiny, non-actor-isolated holder for NotificationCenter observer tokens.
+///
+/// Why this exists: `NowPlayingManager` is `@MainActor`-isolated, which makes its stored
+/// properties main-actor-isolated too. A `deinit` runs in a *nonisolated* context and
+/// therefore cannot read those properties or call main-actor methods (that caused the
+/// "Call to main actor-isolated instance method in a synchronous nonisolated context"
+/// error). By parking the observer tokens in this separate, non-isolated reference type,
+/// `deinit` can clear them safely. The class is marked `@unchecked Sendable` because its
+/// only mutable state is guarded by an `NSLock`, and the tokens it stores are opaque
+/// objects we only ever hand back to the thread-safe `NotificationCenter`.
+final class ObserverStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [NSObjectProtocol] = []
+
+    /// Store an observer token.
+    func add(_ token: NSObjectProtocol) {
+        lock.lock()
+        defer { lock.unlock() }
+        tokens.append(token)
+    }
+
+    /// Remove every stored observer from the default NotificationCenter and forget them.
+    func removeAll() {
+        lock.lock()
+        let current = tokens
+        tokens.removeAll()
+        lock.unlock()
+
+        let center = NotificationCenter.default
+        for token in current {
+            center.removeObserver(token)
         }
     }
 }
