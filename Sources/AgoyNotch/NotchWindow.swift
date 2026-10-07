@@ -66,10 +66,11 @@ final class NotchHostingView: NSHostingView<NotchView> {
         // large region BELOW the notch too, so any cursor crossing that transparent area
         // expanded the panel even when it was nowhere near the real notch.
         //
-        // Instead, track ONLY the currently-interactive painted region (the same rect
-        // `interactiveRectProvider` returns for the current state):
-        //   • COLLAPSED → just the small pill over the physical notch, so moving the cursor
-        //     elsewhere over the transparent window does NOT expand.
+        // Instead, track ONLY the notch-sized region for the current state (the rect
+        // `trackingRectProvider` returns):
+        //   • COLLAPSED → just the small rect over the physical notch, so moving the cursor
+        //     elsewhere over the transparent window does NOT expand. (Nothing is PAINTED
+        //     here while collapsed — tracking is decoupled from drawing.)
         //   • EXPANDED  → the full dropped panel (notchInset + expandedSize.height), so the
         //     cursor can travel from the notch down onto the transport buttons without
         //     leaving the tracked region (preserves the hover-collapse fix).
@@ -94,9 +95,10 @@ final class NotchHostingView: NSHostingView<NotchView> {
         trackingArea = area
     }
 
-    /// Rebuilds the tracking area against the CURRENT interactive rect. The controller calls
+    /// Rebuilds the tracking area against the CURRENT tracking rect. The controller calls
     /// this whenever `viewModel.isExpanded` toggles or the collapsed size changes, so the
-    /// tracked region switches between the small collapsed pill and the large expanded panel.
+    /// tracked region switches between the small collapsed notch rect (invisible but still
+    /// hover-sensitive) and the large expanded panel.
     func refreshTracking() {
         updateTrackingAreas()
     }
