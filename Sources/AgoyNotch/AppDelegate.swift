@@ -9,7 +9,6 @@
 //
 
 import AppKit
-import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -25,8 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Step applied per nudge from the "Adjust Notch" menu, in points.
     private let adjustStep: CGFloat = 2
-
-    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon, no app menu — this is a menu-bar accessory.
@@ -45,13 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         nowPlaying.start()
         windowController.show()
 
-        // When the panel expands/collapses, resize & recenter the window with animation.
-        viewModel.$isExpanded
-            .removeDuplicates()
-            .sink { [weak windowController] _ in
-                windowController?.layoutForStateChange()
-            }
-            .store(in: &cancellables)
+        // NOTE: the window no longer resizes on expand/collapse. It is permanently the
+        // expanded size (see NotchViewModel.windowSize) so the hover tracking area always
+        // covers the whole interactive panel — the fix for the "panel collapses when the
+        // cursor reaches the transport buttons" bug. The collapsed↔expanded morph is a
+        // SwiftUI spring drawn INSIDE the fixed window, so there is nothing to drive here.
 
         setupStatusItem()
     }

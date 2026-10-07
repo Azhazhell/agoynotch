@@ -35,13 +35,24 @@ final class NotchViewModel: ObservableObject {
 
     /// Collapsed pill size. Width/height are supplied by the window controller from the
     /// measured notch geometry via `updateCollapsedSize(_:)`; these are only fallbacks.
+    /// This drives only the SwiftUI pill drawn inside the fixed window — the WINDOW itself
+    /// is always `windowSize` (see below), never the collapsed size.
     private(set) var collapsedSize = CGSize(width: 200, height: 32)
 
     /// Expanded Now Playing panel size (points).
-    let expandedSize = CGSize(width: 360, height: 120)
+    let expandedSize = CGSize(width: 390, height: 128)
 
-    /// The size the window should currently be, based on `isExpanded`.
-    var currentSize: CGSize { isExpanded ? expandedSize : collapsedSize }
+    /// The fixed on-screen size of the NSWindow. It is ALWAYS the expanded size, regardless
+    /// of `isExpanded`.
+    ///
+    /// This is the heart of the hover-collapse bug fix: the window never resizes when the
+    /// panel expands or collapses. Because the window (and therefore the hosting view's
+    /// tracking area) is permanently as large as the expanded panel, the cursor can travel
+    /// from the notch down onto the transport buttons without ever leaving the tracked
+    /// region — so no spurious `mouseExited` fires and the panel stays open. The SwiftUI
+    /// content simply paints either the small collapsed pill (top-centered) or the full
+    /// expanded panel inside this fixed frame; the surrounding area is transparent.
+    var windowSize: CGSize { expandedSize }
 
     // MARK: - Private
 
