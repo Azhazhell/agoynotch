@@ -30,23 +30,41 @@ final class NotchHostingView: NSHostingView<NotchView> {
         super.updateTrackingAreas()
         if let trackingArea {
             removeTrackingArea(trackingArea)
+            self.trackingArea = nil
         }
-        // Hover stability (THE bug fix): the window is now a FIXED expanded size and never
-        // resizes on hover, so this tracking area permanently covers the entire interactive
-        // panel. `.inVisibleRect` keeps it matched to the view's full bounds. Because the
-        // tracked region already spans from the notch down to the transport buttons, moving
-        // the cursor from the notch onto the buttons never crosses the region's edge — so no
-        // spurious `mouseExited` fires and the panel does not collapse out from under the
-        // pointer. The 0.35s collapse debounce in NotchViewModel is a secondary safeguard
-        // for brief slips near the true outer edge.
+        // Phantom-expand bug fix: the window is a FIXED expanded size (big enough to hold
+        // the dropped panel) and anchored at the top of the screen. A tracking area covering
+        // the whole `bounds` (previously via `.inVisibleRect`) therefore spanned the entire
+        // large region BELOW the notch too, so any cursor crossing that transparent area
+        // expanded the panel even when it was nowhere near the real notch.
+        //
+        // Instead, track ONLY the currently-interactive painted region (the same rect
+        // `interactiveRectProvider` returns for the current state):
+        //   • COLLAPSED → just the small pill over the physical notch, so moving the cursor
+        //     elsewhere over the transparent window does NOT expand.
+        //   • EXPANDED  → the full dropped panel (notchInset + expandedSize.height), so the
+        //     cursor can travel from the notch down onto the transport buttons without
+        //     leaving the tracked region (preserves the hover-collapse fix).
+        //
+        // `.inVisibleRect` is intentionally dropped so the explicit `rect:` is honoured.
+        // `refreshTracking()` re-runs this whenever the state (collapsed↔expanded) or the
+        // collapsed size changes, swapping the tracked rect between the two sizes.
+        let trackedRect = interactiveRectProvider?() ?? bounds
         let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            rect: trackedRect,
+            options: [.mouseEnteredAndExited, .activeAlways],
             owner: self,
             userInfo: nil
         )
         addTrackingArea(area)
         trackingArea = area
+    }
+
+    /// Rebuilds the tracking area against the CURRENT interactive rect. The controller calls
+    /// this whenever `viewModel.isExpanded` toggles or the collapsed size changes, so the
+    /// tracked region switches between the small collapsed pill and the large expanded panel.
+    func refreshTracking() {
+        updateTrackingAreas()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -100,16 +118,14 @@ final class NotchWindow: NSPanel {
         // tracking area keeps firing — hover-to-expand is the user's priority and must
         // never break.
         //
-        // Click pass-through (review finding #1): the window is now a FIXED expanded size
-        // (so the tracking area always covers the whole panel — the hover-collapse bug fix).
-        // A large interactive window would otherwise swallow clicks over the big transparent
-        // area while collapsed. We avoid that WITHOUT turning off mouse events — instead the
-        // hosting view's `hitTest` returns `nil` everywhere except the currently-painted
-        // region (the small pill when collapsed, the full panel when expanded). `hitTest`
-        // does not affect NSTrackingArea, so hover still fires across the whole window and
-        // expands the panel, while clicks over the transparent area pass through to the
-        // desktop/other apps. Over the physical notch itself there is no usable screen
-        // anyway, so swallowing clicks on the collapsed pill costs the user nothing.
+        // Click pass-through: the window is a FIXED expanded size. Clicks are restricted to
+        // the currently-painted region by the hosting view's `hitTest` (which returns `nil`
+        // everywhere except the small collapsed pill or the full expanded panel), so clicks
+        // over the surrounding transparent area pass through to the desktop/other apps.
+        // Hover, by contrast, is now scoped by the NSTrackingArea itself (see
+        // `NotchHostingView.updateTrackingAreas`) to that same interactive region, so the
+        // cursor only expands the panel when it is actually over the notch pill — not merely
+        // somewhere over the big transparent window.
         ignoresMouseEvents = false
         // Visible on every Space and over full-screen apps; does not move itself.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]

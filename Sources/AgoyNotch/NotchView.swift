@@ -78,7 +78,12 @@ struct NotchView: View {
             }
 
             content
-                .padding(.horizontal, viewModel.isExpanded ? 14 : 8)
+                // Collapsed: tight horizontal padding so the music glyph sits just inside
+                // the LEFT edge and the equalizer just inside the RIGHT edge of the
+                // near-notch-width black shape — making them read as living WITHIN the
+                // hardware notch rather than on a separate strip. Small vertical padding
+                // keeps them centered in the notch-height shape.
+                .padding(.horizontal, viewModel.isExpanded ? 14 : 6)
                 .padding(.vertical, viewModel.isExpanded ? 12 : 2)
         }
         .clipShape(shape)

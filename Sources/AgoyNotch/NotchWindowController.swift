@@ -13,12 +13,17 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 final class NotchWindowController: NSWindowController {
 
     private let viewModel: NotchViewModel
     private let hostingView: NotchHostingView
+
+    /// Combine subscriptions (currently the `isExpanded` observation that rebuilds the
+    /// hover tracking area). Held so they stay alive for the controller's lifetime.
+    private var cancellables = Set<AnyCancellable>()
 
     /// User fine-tuning (horizontal/vertical offset + width/height adjustment) layered on
     /// top of the auto-detected notch geometry. Loaded from UserDefaults; updated live from
@@ -84,6 +89,23 @@ final class NotchWindowController: NSWindowController {
             return CGRect(x: x, y: y, width: width, height: height)
         }
 
+        // Rebuild the hover tracking area whenever the panel toggles between collapsed and
+        // expanded. The tracked rect follows the interactive region: the small pill over the
+        // notch while collapsed, the full dropped panel while expanded (see
+        // `NotchHostingView.updateTrackingAreas`). Without this the collapsed tracking rect
+        // would never grow and the cursor would leave it as soon as the panel expanded.
+        //
+        // `viewModel` is @MainActor and `$isExpanded` publishes on the main actor (it is
+        // only mutated there), and `receive(on:)` guarantees the AppKit call runs on main.
+        // `[weak hosting]` avoids a retain cycle (the controller owns `hosting`, which — via
+        // its providers — would otherwise capture the controller/view model strongly).
+        viewModel.$isExpanded
+            .receive(on: RunLoop.main)
+            .sink { [weak hosting] _ in
+                hosting?.refreshTracking()
+            }
+            .store(in: &cancellables)
+
         // Reposition whenever the display configuration changes (resolution, arrangement,
         // a display plugged/unplugged, etc.).
         screenParamsObserver = NotificationCenter.default.addObserver(
@@ -125,8 +147,12 @@ final class NotchWindowController: NSWindowController {
     /// height / menu-bar strip) so the black shape coincides with the real notch's height
     /// instead of adding a second shape beneath it.
     private func measuredCollapsedSize(for screen: NSScreen?) -> CGSize {
-        // Extra width (points) beyond the bare notch so the glyph + equalizer sit beside it.
-        let indicatorSlack: CGFloat = 56
+        // Extra width (points) added to the bare notch width. Kept SMALL so the collapsed
+        // shape overlays the physical notch rather than forming a wider black bar beneath
+        // it (the "strip below the notch" look the user complained about). The glyph and
+        // equalizer live just inside the left/right of this near-notch-width shape. Tunable
+        // via the Wider/Narrower menu for the user's exact hardware (default ~8pt slack).
+        let indicatorSlack: CGFloat = 8
 
         let base: CGSize
         if let screen, screen.safeAreaInsets.top > 0 {
@@ -207,6 +233,11 @@ final class NotchWindowController: NSWindowController {
         // Never animate the frame: the window size is constant, so there is nothing to
         // animate here. The collapsed↔expanded morph is a SwiftUI spring inside the window.
         window.setFrame(frame, display: true, animate: false)
+
+        // The collapsed size may have changed above (measurement or a Wider/Taller nudge),
+        // which changes the collapsed interactive rect. Rebuild the hover tracking area so
+        // the tracked pill matches the newly drawn collapsed shape.
+        hostingView.refreshTracking()
     }
 
     /// Shows the panel and performs the initial placement.
