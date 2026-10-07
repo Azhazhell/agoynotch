@@ -35,9 +35,9 @@ final class NotchHostingView: NSHostingView<NotchView> {
     ///   • COLLAPSED → the small notch-sized rect at the TOP CENTER (over the physical
     ///     notch), EVEN THOUGH nothing is drawn there — so moving the cursor onto the real
     ///     notch still fires `mouseEntered` and expands the panel.
-    ///   • EXPANDED  → the full dropped panel (notchInset + expandedSize.height), so the
-    ///     cursor can travel from the notch down onto the transport buttons without leaving
-    ///     the tracked region.
+    ///   • EXPANDED  → the full grown panel (expandedSize, flush at the top), so the cursor
+    ///     can travel from the notch down onto the transport buttons without leaving the
+    ///     tracked region.
     /// `nil` falls back to the whole `bounds`. Set by the controller.
     var trackingRectProvider: (() -> CGRect?)?
 
@@ -61,7 +61,7 @@ final class NotchHostingView: NSHostingView<NotchView> {
             self.trackingArea = nil
         }
         // Phantom-expand bug fix: the window is a FIXED expanded size (big enough to hold
-        // the dropped panel) and anchored at the top of the screen. A tracking area covering
+        // the grown panel) and anchored at the top of the screen. A tracking area covering
         // the whole `bounds` (previously via `.inVisibleRect`) therefore spanned the entire
         // large region BELOW the notch too, so any cursor crossing that transparent area
         // expanded the panel even when it was nowhere near the real notch.
@@ -71,7 +71,7 @@ final class NotchHostingView: NSHostingView<NotchView> {
         //   • COLLAPSED → just the small rect over the physical notch, so moving the cursor
         //     elsewhere over the transparent window does NOT expand. (Nothing is PAINTED
         //     here while collapsed — tracking is decoupled from drawing.)
-        //   • EXPANDED  → the full dropped panel (notchInset + expandedSize.height), so the
+        //   • EXPANDED  → the full grown panel (expandedSize, flush at the top), so the
         //     cursor can travel from the notch down onto the transport buttons without
         //     leaving the tracked region (preserves the hover-collapse fix).
         //
@@ -117,8 +117,8 @@ final class NotchHostingView: NSHostingView<NotchView> {
     /// clicks through to whatever is behind the overlay (desktop, other apps, the menu bar).
     ///   • COLLAPSED → the view paints nothing, so `interactiveRectProvider` returns an
     ///     EMPTY rect and EVERY click over the (invisible) notch region passes through.
-    ///   • EXPANDED  → the hit region is the full dropped panel, so clicks hit the
-    ///     transport buttons.
+    ///   • EXPANDED  → the hit region is the full grown panel (flush at the top), so clicks
+    ///     hit the transport buttons.
     /// Returning `nil` from `hitTest` makes a point transparent to clicks WITHOUT affecting
     /// the NSTrackingArea (which uses `trackingRectProvider`), so hover-to-expand still
     /// fires over the physical notch even while collapsed clicks pass straight through. This
@@ -151,6 +151,13 @@ final class NotchWindow: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        // WINDOW LEVEL: `.statusBar` sits at the menu-bar layer, so the panel can draw OVER
+        // the menu-bar strip and right up to the physical top of the display — essential now
+        // that the panel's top band must fuse with the hardware notch with no gap. (A higher
+        // level such as a shielding level is unnecessary and would also float over system
+        // UI; `.statusBar` is enough to overlap the menu bar.) The panel never becomes
+        // key/main (see `canBecomeKey`/`canBecomeMain` below) + `.nonactivatingPanel`, so it
+        // never steals focus from the user's active app despite the raised level.
         level = .statusBar
         isFloatingPanel = true
         isMovableByWindowBackground = false

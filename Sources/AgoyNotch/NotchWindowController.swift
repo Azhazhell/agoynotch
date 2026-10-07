@@ -75,16 +75,16 @@ final class NotchWindowController: NSWindowController {
         //    over the big transparent window does NOT expand (phantom-expand fix). The rect
         //    stays here EVEN THOUGH collapsed now paints nothing — hover is decoupled from
         //    drawing.
-        //  • EXPANDED → the shape is pushed DOWN by `notchInset`, so the tracked region
-        //    spans notchInset + expandedSize.height, letting the cursor travel from the
-        //    notch onto the transport buttons without leaving the region (move-to-buttons
-        //    fix).
+        //  • EXPANDED → the full grown panel, which now starts flush at the TOP (no gap),
+        //    so the tracked region is simply the panel's whole rect (expandedSize) anchored
+        //    at the top. This lets the cursor travel from the notch down onto the transport
+        //    buttons without leaving the region (move-to-buttons fix).
         hosting.trackingRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
             if viewModel.isExpanded {
                 return Self.topCenteredRect(
                     width: viewModel.expandedSize.width,
-                    height: viewModel.notchInset + viewModel.expandedSize.height,
+                    height: viewModel.expandedSize.height,
                     in: hosting
                 )
             } else {
@@ -100,7 +100,7 @@ final class NotchWindowController: NSWindowController {
         //  • COLLAPSED → `.zero` (empty). The overlay paints nothing, so clicks over the
         //    invisible notch region pass straight through (`hitTest` returns `nil`). Hover
         //    still works because it uses `trackingRectProvider`, not this.
-        //  • EXPANDED → the full dropped panel, so clicks hit the transport buttons.
+        //  • EXPANDED → the full grown panel (flush at the top), so clicks hit the buttons.
         hosting.interactiveRectProvider = { [weak viewModel, weak hosting] in
             guard let viewModel, let hosting else { return nil }
             guard viewModel.isExpanded else {
@@ -108,14 +108,14 @@ final class NotchWindowController: NSWindowController {
             }
             return Self.topCenteredRect(
                 width: viewModel.expandedSize.width,
-                height: viewModel.notchInset + viewModel.expandedSize.height,
+                height: viewModel.expandedSize.height,
                 in: hosting
             )
         }
 
         // Rebuild the hover tracking area whenever the panel toggles between collapsed and
         // expanded. The tracked rect follows the interactive region: the small pill over the
-        // notch while collapsed, the full dropped panel while expanded (see
+        // notch while collapsed, the full grown panel while expanded (see
         // `NotchHostingView.updateTrackingAreas`). Without this the collapsed tracking rect
         // would never grow and the cursor would leave it as soon as the panel expanded.
         //
