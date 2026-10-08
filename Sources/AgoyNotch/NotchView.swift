@@ -65,7 +65,8 @@ struct NotchView: View {
             // vertically centred in the notch height, 8 pt clear of the camera. Fades with
             // the content and is clipped away while collapsed.
             .overlay(alignment: .topLeading) {
-                MessageBadgesRow(badges: viewModel.messageBadges.badges)
+                MessageBadgesRow(badges: viewModel.messageBadges.badges,
+                                 onOpen: { viewModel.collapseNow() })
                     .frame(width: max(viewModel.leftBandWidth - 28, 0),
                            height: viewModel.notchSize.height, alignment: .leading)
                     .padding(.leading, 20)
@@ -246,6 +247,10 @@ struct NotchView: View {
                 // Apple-Music-style glyph when unknown.
                 AppIconImage(bundleID: info.sourceBundleID, size: 18, fallback: .musicGlyph)
             }
+            // Click artwork / title / artist → bring the playing app to the front.
+            .contentShape(Rectangle())
+            .onTapGesture { openPlayingApp() }
+            .pointingHandCursor()
 
             // Transport controls, centered on their own row below the metadata.
             HStack(spacing: 34) {
@@ -257,6 +262,17 @@ struct NotchView: View {
             .frame(maxWidth: .infinity)
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// Activates the app that is playing (Apple Music when the AppleScript path supplied
+    /// the info without a bundle ID), then closes the panel.
+    private func openPlayingApp() {
+        guard info.hasMedia else { return }
+        let bundleID = info.sourceBundleID
+            ?? ((info.source == .appleMusicScript || info.title != nil) ? "com.apple.Music" : nil)
+        guard let bundleID else { return }
+        AppLauncher.activate(bundleID: bundleID)
+        viewModel.collapseNow()
     }
 
     /// Tasteful placeholder shown in the expanded panel when nothing is playing.

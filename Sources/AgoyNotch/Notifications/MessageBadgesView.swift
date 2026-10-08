@@ -11,13 +11,23 @@ import SwiftUI
 
 struct MessageBadgesRow: View {
     let badges: [MessageBadge]
+    /// Called after a badge click opened its app (the panel then closes).
+    var onOpen: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
-            ForEach(badges) { BadgeIcon(badge: $0) }
+            ForEach(badges) { badge in
+                Button {
+                    AppLauncher.activate(bundleID: badge.bundleID)
+                    onOpen()
+                } label: {
+                    BadgeIcon(badge: badge).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
         }
         .fixedSize()
-        .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.2), value: badges)
     }
 }
@@ -38,6 +48,16 @@ private struct BadgeIcon: View {
                     .fixedSize()
                     .offset(x: 6, y: -5)
             }
+    }
+}
+
+extension View {
+    /// Pointing-hand cursor while hovering a clickable element.
+    func pointingHandCursor() -> some View {
+        onHover { inside in
+            // set() (not push/pop): the panel may collapse under the cursor without an exit.
+            (inside ? NSCursor.pointingHand : NSCursor.arrow).set()
+        }
     }
 }
 

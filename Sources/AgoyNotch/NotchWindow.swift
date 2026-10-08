@@ -86,6 +86,9 @@ final class NotchHostingView: NSHostingView<NotchView> {
 
     // MARK: - Click pass-through
 
+    /// The app is never active, so the first click must act (badges, Now Playing, buttons).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     /// While expanded (the only time the window accepts mouse events), only the painted
     /// panel swallows clicks; everywhere else returns `nil` so clicks pass through.
     override func hitTest(_ point: NSPoint) -> NSView? {

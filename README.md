@@ -130,6 +130,10 @@ the panel is open, the Messages (iMessage) and WhatsApp icons appear in the blac
 the camera with their unread count — only the logo and the number, and only for apps with
 unread messages. Counts above 99 show as `99+`.
 
+**Click to open:** in the open panel, clicking a badge opens Messages / WhatsApp, and clicking
+the Now Playing artwork or title brings the playing app (Music, Spotify, Safari/Chrome, TV…)
+to the front; the panel then closes.
+
 - **Where the number comes from:** the app's red **Dock badge**, read through the
   Accessibility API every 3 s (and when the panel opens). The app must be running (in the
   background is fine), and *System Settings → Notifications → Messages / WhatsApp → Badge

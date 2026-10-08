@@ -183,6 +183,9 @@ final class NotchViewModel: ObservableObject {
     /// this guard that nested call would schedule a second, redundant pending open.
     func updateHover(isInside: Bool) {
         guard !isChangingExpansion else { return }
+        // After a click-to-open collapse, don't reopen until the cursor has left the zone.
+        if !isInside { suppressOpenUntilExit = false }
+        if isInside, suppressOpenUntilExit { return }
         if isInside {
             pendingClose?.cancel()
             pendingClose = nil
@@ -232,6 +235,19 @@ final class NotchViewModel: ObservableObject {
     /// (positionWindow → refreshTracking → updateHover) while `isExpanded` still has the old
     /// value; this flag makes that nested call a no-op instead of a second, nested open.
     private var isChangingExpansion = false
+
+    /// Set by `collapseNow()`; cleared by the next "outside" hover update.
+    private var suppressOpenUntilExit = false
+
+    /// Closes the panel immediately (after a badge / Now Playing click opened an app).
+    func collapseNow() {
+        pendingOpen?.cancel()
+        pendingOpen = nil
+        pendingClose?.cancel()
+        pendingClose = nil
+        suppressOpenUntilExit = true
+        setExpanded(false)
+    }
 
     /// The single place `isExpanded` is written.
     private func setExpanded(_ value: Bool) {
