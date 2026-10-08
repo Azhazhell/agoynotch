@@ -10,7 +10,9 @@
 # Output: build/AgoyNotch.app (ad-hoc signed), with Contents/Resources/AppIcon.icns built
 # via sips + iconutil from Resources/AppIcon-custom.png (the face icon, written by --face;
 # never committed) if it exists, else Resources/AppIcon.png (the skull). With --install the
-# build copy is removed once it is installed.
+# build copy is removed once it is installed. The Now Playing helper (vendored
+# mediaremote-adapter, Vendor/) is built into Contents/Frameworks with clang; if that fails
+# the app still builds and falls back to Apple Music only.
 #
 set -euo pipefail
 
@@ -65,13 +67,72 @@ BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
 # --- Assemble the bundle -----------------------------------------------------------------
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+FW="$APP/Contents/Frameworks/MediaRemoteAdapter.framework"
 cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Stamp a fresh build number so icon caches see a new app version.
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1.$(date +%s)" "$APP/Contents/Info.plist"
+
+# --- Now Playing helper (vendored mediaremote-adapter → MediaRemoteAdapter.framework) -----
+# Called in an `if`, which disables `set -e` inside the function, so every step ends in
+# `|| return 1`. Non-fatal: on failure the caller removes every helper file, so the bundle
+# has the complete helper or none of it (Settings then says "helper not bundled").
+build_adapter() {
+    local v="$ROOT/Vendor/mediaremote-adapter"
+    local src
+    local ADAPTER_SOURCES=()
+    for src in env get globals keys now_playing repeat seek send shuffle speed stream test; do
+        ADAPTER_SOURCES+=("$v/src/adapter/$src.m")
+    done
+    ADAPTER_SOURCES+=("$v/src/private/MediaRemote.m" "$v/src/utility/Debounce.m" "$v/src/utility/helpers.m")
+    mkdir -p "$FW/Versions/A/Resources" || return 1
+    # Always universal: /usr/bin/perl is universal (mirrors upstream). -w: third-party code.
+    xcrun --sdk macosx clang -dynamiclib -fobjc-arc -fvisibility=default -O2 -w \
+        -arch arm64 -arch x86_64 -mmacosx-version-min=15.0 \
+        -I "$v/include" -I "$v/src" \
+        -framework Foundation -framework AppKit -framework ImageIO -framework UniformTypeIdentifiers \
+        -install_name @rpath/MediaRemoteAdapter.framework/Versions/A/MediaRemoteAdapter \
+        -o "$FW/Versions/A/MediaRemoteAdapter" "${ADAPTER_SOURCES[@]}" || return 1
+    cat > "$FW/Versions/A/Resources/Info.plist" <<'PLIST' || return 1
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.vandenbe.MediaRemoteAdapter</string>
+    <key>CFBundleExecutable</key>
+    <string>MediaRemoteAdapter</string>
+    <key>CFBundleName</key>
+    <string>MediaRemoteAdapter</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+</dict>
+</plist>
+PLIST
+    ln -sfn A "$FW/Versions/Current" || return 1
+    ln -sfn Versions/Current/MediaRemoteAdapter "$FW/MediaRemoteAdapter" || return 1
+    ln -sfn Versions/Current/Resources "$FW/Resources" || return 1
+    codesign --force --sign - "$FW" || return 1
+    cp "$v/bin/mediaremote-adapter.pl" "$APP/Contents/Resources/mediaremote-adapter.pl" || return 1
+    cp "$v/LICENSE" "$APP/Contents/Resources/MediaRemoteAdapter-LICENSE.txt" || return 1
+}
+if build_adapter; then
+    echo "Now Playing helper: built"
+else
+    rm -rf "$FW" "$APP/Contents/Resources/mediaremote-adapter.pl" "$APP/Contents/Resources/MediaRemoteAdapter-LICENSE.txt"
+    echo "warning: Now Playing helper (mediaremote-adapter) could not be built." >&2
+    echo "warning: AgoyNotch will only show Apple Music; Settings will say \"helper not bundled\"." >&2
+    echo "warning: See the clang output above; the icon and message badges are unaffected." >&2
+fi
 
 # --- App icon (face icon if present, else the skull → AppIcon.icns) ----------------------
 ICON_SRC="$ROOT/Resources/AppIcon.png"
@@ -105,6 +166,12 @@ fi
 # --- Ad-hoc sign (needed for a stable identity: Automation permission, login item) -------
 codesign --force --deep --sign - "$APP"
 codesign --verify --verbose "$APP"
+
+# Helper self-test (only when it was built). `get` has an internal 2 s timeout. Non-fatal.
+if [[ -d "$FW" ]]; then
+    /usr/bin/perl "$APP/Contents/Resources/mediaremote-adapter.pl" "$FW" get --no-artwork >/dev/null 2>&1 \
+        || echo "warning: Now Playing helper failed its self-test (Settings will show the reason)" >&2
+fi
 touch "$APP"
 echo "Built $APP"
 

@@ -14,6 +14,7 @@ import SwiftUI
 struct SettingsView: View {
 
     @ObservedObject var settings: AppSettings
+    @ObservedObject var nowPlaying: NowPlayingManager
 
     /// Launch-at-login state. The source of truth is SMAppService, not UserDefaults.
     @State private var loginEnabled = (SMAppService.mainApp.status == .enabled)
@@ -110,10 +111,14 @@ struct SettingsView: View {
         Section {
             Toggle("Show music activity beside the notch", isOn: $settings.showMusicActivity)
             ColorPicker("Equalizer colour", selection: $settings.equalizerColor, supportsOpacity: true)
+            Text(nowPlaying.adapterStatus.settingsText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
             Text("Music activity")
         } footer: {
-            Text("While Apple Music is playing and the panel is closed, a small black pill beside the notch "
+            Text("While something is playing (Apple Music, Spotify, Apple TV, or YouTube / "
+                 + "SoundCloud / Spotify in a browser) and the panel is closed, a small black pill beside the notch "
                  + "shows the artwork and a moving equalizer. Hovering it opens the panel. "
                  + "Paused or nothing playing = nothing is shown.")
         }
@@ -211,6 +216,23 @@ struct SettingsView: View {
             loginError = error.localizedDescription
         }
         loginEnabled = (SMAppService.mainApp.status == .enabled)
+    }
+}
+
+// MARK: - Now Playing source
+
+private extension AdapterStatus {
+    var settingsText: String {
+        switch self {
+        case .running:
+            return "Now Playing source: all apps (Music, Spotify, TV, browsers)"
+        case .starting:
+            return "Now Playing source: starting…"
+        case .notBundled:
+            return "Now Playing source: Apple Music only (helper not bundled — use the app built by build-app.sh)"
+        case .failed(let reason):
+            return "Now Playing source: Apple Music only — \(reason)"
+        }
     }
 }
 

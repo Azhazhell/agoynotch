@@ -14,8 +14,8 @@
 //
 //  Morph: the shape's frame animates from the notch size to the panel size, anchored
 //  top-center, using the spring from Settings → Animation duration (0 = instant). The
-//  collapsed end state is fully invisible (opacity 0, no hit-testing) unless Apple Music is
-//  playing: then it is the music activity pill, a black shape exactly the notch's height
+//  collapsed end state is fully invisible (opacity 0, no hit-testing) unless any Now Playing
+//  app is playing: then it is the music activity pill, a black shape exactly the notch's height
 //  fused with the notch, with artwork on the left wing and an equalizer on the right (see
 //  MusicActivityView.swift). The morph grows from the pill when it is showing, else from
 //  the bare notch. The NSWindow is only the hover-zone (or pill) size while collapsed;
@@ -40,7 +40,7 @@ struct NotchView: View {
 
     var body: some View {
         let expanded = viewModel.isExpanded
-        // Collapsed + enabled + Apple Music playing → the pill beside the notch.
+        // Collapsed + enabled + any Now Playing app playing → the pill beside the notch.
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
@@ -157,8 +157,8 @@ struct NotchView: View {
     }
 
     /// The full Now Playing panel, laid out for the taller NotchNook-sized body: a top row
-    /// with the (large) album art beside the title/album/artist stack and an Apple-Music
-    /// glyph, and a row of transport controls beneath — all below the camera cutout.
+    /// with the (large) album art beside the title/album/artist stack and the source app's
+    /// icon, and a row of transport controls beneath — all below the camera cutout.
     private var nowPlayingPanel: some View {
         VStack(spacing: 16) {
             HStack(spacing: 16) {
@@ -206,8 +206,9 @@ struct NotchView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Small Apple-Music-style glyph in the top-right.
-                AppleMusicGlyph(size: 18)
+                // The source app's icon (Chrome, Spotify, TV…) in the top-right; the
+                // Apple-Music-style glyph when unknown.
+                AppIconImage(bundleID: info.sourceBundleID, size: 18, fallback: .musicGlyph)
             }
 
             // Transport controls, centered on their own row below the metadata.

@@ -2,55 +2,45 @@
 //  NowPlayingManager.swift
 //  AgoyNotch
 //
-//  Observable service that polls the current Apple Music state (via AppleScript) into a
-//  published `NowPlayingInfo` and exposes transport commands.
+//  Observable service that publishes the current Now Playing state of any app into a
+//  `NowPlayingInfo` and exposes transport commands.
 //
-//  DATA SOURCE: the LIVE source is `AppleScriptNowPlaying` (Apple Music only). The private
-//  MediaRemote path (`MediaRemoteBridge`) is kept in the tree as a DORMANT historical
-//  fallback — it is no longer the live path because macOS 15.4+ denies Now Playing data to
-//  unentitled callers (see AppleScriptNowPlaying / README). The public API below
-//  (`info`, `start`/`stop`, `togglePlayPause`/`next`/`previous`) is UNCHANGED so
-//  NotchView / NotchViewModel keep working as-is.
+//  DATA SOURCES (merged by the pure `NowPlayingSourceChoice.choose` rule):
+//    • the vendored mediaremote-adapter helper (`MediaRemoteAdapterClient`), a
+//      `/usr/bin/perl` child that streams Now Playing from every app — Apple Music,
+//      Spotify, Apple TV and browser players (YouTube, SoundCloud, …);
+//    • the Apple Music AppleScript poll (`AppleScriptNowPlaying`), which always runs so
+//      Apple Music keeps working when the helper is not bundled or fails.
+//  The public API (`info`, `start`/`stop`, `togglePlayPause`/`next`/`previous`) is
+//  unchanged; `adapterStatus` is new and shown in Settings.
 //
-//  Local-only: this talks solely to the on-device Music.app via AppleScript. No network,
-//  no telemetry. Apple Music artwork is read as raw local bytes; nothing is fetched over
-//  the network.
+//  Local-only: the helper reads the on-device MediaRemote state and AppleScript talks to
+//  the on-device Music.app. No network, no telemetry.
 //
 //  Concurrency / isolation
 //  ------------------------
-//  This type is `@MainActor`-isolated. It is a UI-facing `ObservableObject` whose
-//  `@Published info` drives SwiftUI, so every mutation of `info` must happen on the main
-//  actor anyway. Making the whole class main-actor-isolated states that invariant to the
-//  compiler, so under Swift 6 strict concurrency (which tools-version 6.0 can enforce even
-//  under language mode v5) the data-race diagnostics disappear WITHOUT leaning on the
-//  language-mode setting:
-//
-//    • Polling runs NSAppleScript synchronously on a background queue (artwork decoding is
-//      done there too, off the main thread). The background block must NOT touch `self`
-//      directly: it builds a pure `NowPlayingInfo` value via the Sendable
-//      `AppleScriptNowPlaying`, then hops to the main actor exactly once via
-//      `Task { @MainActor in … }` to assign `info`. `self` is captured weakly and the
-//      mutation is main-actor-isolated, so there is no "Sending 'self' risks a data race".
-//    • The follow-up refresh delay also hops to the main actor before touching `self`.
+//  This type is `@MainActor`-isolated: `info` and `adapterStatus` drive SwiftUI.
+//    • AppleScript polling runs on the background `workQueue`; it builds a pure
+//      `NowPlayingInfo` and hops to the main actor once via `Task { @MainActor in … }`.
+//    • The helper client calls back on its own serial queue; artwork is decoded there
+//      (`ArtworkCache`), then the value hops to the main actor the same way.
+//    • `republish()` is the single writer of `info`.
 //
 
 import AppKit
 import Combine
 
-/// Fetches and publishes the Apple Music Now Playing state and forwards transport commands.
-///
-/// Main-actor-isolated: its `@Published info` feeds SwiftUI, and all call sites
-/// (`AppDelegate` launch/terminate delegate methods, `NotchViewModel`, `NotchView`
-/// transport buttons) already run on the main actor.
+/// Fetches and publishes the Now Playing state and forwards transport commands.
 @MainActor
 final class NowPlayingManager: ObservableObject {
 
     /// The latest Now Playing snapshot. Starts empty and updates on the main actor.
     @Published private(set) var info: NowPlayingInfo = .empty
 
-    /// LIVE data source: AppleScript to Apple Music. `MediaRemoteBridge` is intentionally
-    /// NOT instantiated here anymore — it is dormant historical code (see file header /
-    /// README). The provider is a pure, Sendable value we can call from a background queue.
+    /// State of the all-apps helper, shown in Settings.
+    @Published private(set) var adapterStatus: AdapterStatus = .starting
+
+    /// Apple Music fallback source: a pure, Sendable value callable from a background queue.
     private let provider = AppleScriptNowPlaying()
 
     /// Background queue used to run the (synchronous) AppleScript polling + artwork decode
@@ -65,10 +55,18 @@ final class NowPlayingManager: ObservableObject {
     /// already off the main thread (where AppleScript must run). Torn down in `stop()`.
     private var pollTimer: DispatchSourceTimer?
 
+    /// The all-apps helper; nil when not bundled or not startable.
+    private var adapter: MediaRemoteAdapterClient?
+    /// Latest value from each source; `republish()` picks one.
+    private var adapterInfo: NowPlayingInfo?
+    private var scriptInfo = NowPlayingInfo.empty
+
     // MARK: - Lifecycle
 
-    /// Begin polling Apple Music and publish an initial snapshot immediately.
+    /// Start the helper stream and the Apple Music poll, publishing an initial snapshot.
     func start() {
+        startAdapter()
+
         // Immediate first read so the panel isn't blank until the first tick.
         refresh()
 
@@ -79,16 +77,18 @@ final class NowPlayingManager: ObservableObject {
         timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
         timer.setEventHandler { [weak self, provider] in
             let snapshot = provider.fetchSnapshot()
-            Task { @MainActor in self?.info = snapshot }
+            Task { @MainActor in self?.scriptDidUpdate(snapshot) }
         }
         timer.resume()
         pollTimer = timer
     }
 
-    /// Stop polling.
+    /// Stop polling and stop the helper (synchronously signals the child).
     func stop() {
         pollTimer?.cancel()
         pollTimer = nil
+        adapter?.stop()
+        adapter = nil
     }
 
     deinit {
@@ -99,33 +99,98 @@ final class NowPlayingManager: ObservableObject {
         // AppDelegate calls it on `applicationWillTerminate`.
     }
 
+    // MARK: - Helper
+
+    private func startAdapter() {
+        let paths: MediaRemoteAdapterClient.Paths
+        do {
+            paths = try MediaRemoteAdapterClient.bundledPaths()
+        } catch MediaRemoteAdapterClient.SetupError.perlMissing {
+            adapterStatus = .failed("/usr/bin/perl not found")
+            AgoyLog.write("Now Playing helper unavailable: /usr/bin/perl not found; Apple Music only")
+            return
+        } catch {
+            adapterStatus = .notBundled
+            AgoyLog.write("Now Playing helper not bundled; Apple Music only")
+            return
+        }
+
+        let cache = ArtworkCache()
+        let client = MediaRemoteAdapterClient(
+            paths: paths,
+            onSnapshot: { [weak self, cache] snap in
+                let info = snap.map { cache.info(for: $0) }
+                Task { @MainActor in self?.adapterDidUpdate(info) }
+            },
+            onStatus: { [weak self] s in
+                Task { @MainActor in self?.adapterStatus = s }
+            }
+        )
+        adapter = client
+        client.start()
+    }
+
+    private func adapterDidUpdate(_ value: NowPlayingInfo?) {
+        adapterInfo = value
+        republish()
+    }
+
+    private func scriptDidUpdate(_ value: NowPlayingInfo) {
+        scriptInfo = value
+        republish()
+    }
+
+    /// The single writer of `info`.
+    private func republish() {
+        let choice = NowPlayingSourceChoice.choose(
+            adapterHasMedia: adapterInfo?.hasMedia ?? false,
+            adapterPlaying: adapterInfo?.isPlaying ?? false,
+            scriptHasMedia: scriptInfo.hasMedia,
+            scriptPlaying: scriptInfo.isPlaying
+        )
+        let next = (choice == .adapter ? adapterInfo : nil) ?? scriptInfo
+        if next != info { info = next }
+    }
+
     // MARK: - Refresh
 
-    /// Pull the latest Apple Music snapshot and republish `info` on the main actor.
+    /// Pull the latest Apple Music snapshot and republish on the main actor.
     func refresh() {
         // Run the (synchronous) AppleScript + artwork decode on the background queue so the
         // UI never blocks. The block must not touch `self` directly: build a pure value via
         // the Sendable provider, then hop to the main actor once to assign.
         workQueue.async { [weak self, provider] in
             let snapshot = provider.fetchSnapshot()
-            Task { @MainActor in self?.info = snapshot }
+            Task { @MainActor in self?.scriptDidUpdate(snapshot) }
         }
     }
 
     // MARK: - Transport commands
 
-    /// Toggle play/pause of Apple Music.
+    /// Toggle play/pause of the app being shown.
     func togglePlayPause() {
+        if info.source == .mediaRemote, let adapter {
+            adapter.send(.togglePlayPause)
+            return
+        }
         sendCommand { $0.togglePlayPause() }
     }
 
-    /// Skip to the next track in Apple Music.
+    /// Skip to the next track in the app being shown.
     func next() {
+        if info.source == .mediaRemote, let adapter {
+            adapter.send(.nextTrack)
+            return
+        }
         sendCommand { $0.next() }
     }
 
-    /// Skip to the previous track in Apple Music.
+    /// Skip to the previous track in the app being shown.
     func previous() {
+        if info.source == .mediaRemote, let adapter {
+            adapter.send(.previousTrack)
+            return
+        }
         sendCommand { $0.previous() }
     }
 
@@ -146,5 +211,41 @@ final class NowPlayingManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
             self?.refresh()
         }
+    }
+}
+
+/// Turns helper snapshots into `NowPlayingInfo`, decoding artwork only when it changes.
+/// Used ONLY from the helper client's serial callback queue (hence `@unchecked Sendable`).
+private final class ArtworkCache: @unchecked Sendable {
+    private var lastBase64: String?
+    private var lastImage: NSImage?
+    private var lastKey: Int?
+
+    func info(for s: AdapterSnapshot) -> NowPlayingInfo {
+        if s.artworkBase64 != lastBase64 {
+            lastBase64 = s.artworkBase64
+            lastImage = nil
+            lastKey = nil
+            if let b64 = s.artworkBase64,
+               let data = Data(base64Encoded: b64),
+               let image = NSImage(data: data) {
+                lastImage = image
+                lastKey = ArtworkKey.of(data)
+            } else if s.artworkBase64 != nil {
+                #if DEBUG
+                print("[AgoyNotch] Now Playing artwork could not be decoded")
+                #endif
+            }
+        }
+        return NowPlayingInfo(
+            title: s.title,
+            artist: s.artist,
+            album: s.album,
+            artwork: lastImage,
+            isPlaying: s.isPlaying,
+            source: .mediaRemote,
+            sourceBundleID: s.sourceBundleID,
+            artworkKey: lastKey
+        )
     }
 }

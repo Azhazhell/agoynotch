@@ -4,12 +4,11 @@
 //
 //  AppleScript-based Now Playing provider for Apple Music (Music.app).
 //
-//  WHY APPLESCRIPT (not MediaRemote): since macOS 15.4 the system `mediaremoted` daemon
-//  verifies caller entitlements before returning Now Playing data, so the private
-//  MediaRemote dlopen/dlsym path (MediaRemoteBridge) returns EMPTY info to an unentitled
-//  SPM executable — hence the app always showed "Nothing playing". AppleScript to a
-//  scriptable player still works on macOS 27, so this is the LIVE data source now.
-//  MediaRemoteBridge stays in the tree as a dormant historical fallback.
+//  ROLE: the Apple Music FALLBACK. Now Playing from every app (Music, Spotify, TV,
+//  browsers) comes from the vendored mediaremote-adapter helper (MediaRemoteAdapterClient),
+//  because since macOS 15.4 apps cannot read MediaRemote directly. This poll always runs
+//  too, so Apple Music keeps working when the helper is missing or fails; NowPlayingManager
+//  picks which source is shown (NowPlayingSourceChoice).
 //
 //  SCOPE: Apple Music ONLY. We read Music.app's player state + current track and send its
 //  transport commands. No other player is contacted.
@@ -67,8 +66,11 @@ struct AppleScriptNowPlaying: Sendable {
             title: fields.title.isEmpty ? nil : fields.title,
             artist: fields.artist.isEmpty ? nil : fields.artist,
             album: fields.album.isEmpty ? nil : fields.album,
-            artwork: artwork,
-            isPlaying: fields.state == "playing"
+            artwork: artwork?.image,
+            isPlaying: fields.state == "playing",
+            source: .appleMusicScript,
+            sourceBundleID: "com.apple.Music",
+            artworkKey: artwork?.key
         )
     }
 
@@ -144,8 +146,9 @@ struct AppleScriptNowPlaying: Sendable {
     // MARK: - Artwork script
 
     /// Reads the current track's artwork as raw image bytes, decoding to an `NSImage` on the
-    /// calling (background) thread. Returns `nil` when there is no artwork or on any error.
-    private func runArtworkScript() -> NSImage? {
+    /// calling (background) thread, keyed by `ArtworkKey.of` over all bytes (not
+    /// `Data.hashValue`, which only covers the first 80). `nil` when absent or on any error.
+    private func runArtworkScript() -> (image: NSImage, key: Int)? {
         let source = """
         if application "Music" is running then
             tell application "Music"
@@ -165,8 +168,8 @@ struct AppleScriptNowPlaying: Sendable {
         }
         // `missing value` comes back as a null/!data descriptor; its data will be empty.
         let data = descriptor.data
-        guard !data.isEmpty else { return nil }
-        return NSImage(data: data)
+        guard !data.isEmpty, let image = NSImage(data: data) else { return nil }
+        return (image: image, key: ArtworkKey.of(data))
     }
 
     // MARK: - Transport

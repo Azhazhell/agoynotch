@@ -2,9 +2,9 @@
 //  MusicActivityView.swift
 //  AgoyNotch
 //
-//  The collapsed "live activity" pill shown beside the hardware notch while Apple Music is
-//  playing: the LEFT wing shows the album artwork (or an Apple-Music-style SF Symbol
-//  stand-in — NOT Apple's logo asset), the middle under the notch is plain black, and the
+//  The collapsed "live activity" pill shown beside the hardware notch while any Now Playing
+//  app is playing: the LEFT wing shows the album artwork (or the source app's icon, or an
+//  Apple-Music-style SF Symbol stand-in — NOT Apple's logo asset), the middle under the notch is plain black, and the
 //  RIGHT wing shows an animated equalizer. NotchView places these wings inside its single
 //  black morphing shape, so the pill is the same shape that grows into the panel.
 //
@@ -39,7 +39,7 @@ struct MusicActivityWings: View {
         .allowsHitTesting(false)
     }
 
-    /// Album artwork thumbnail, or the SF Symbol stand-in when there is none.
+    /// Album artwork thumbnail, or the source app's icon (glyph fallback) when there is none.
     @ViewBuilder
     private var leftWing: some View {
         let side = max(notchSize.height - 10, 8)
@@ -50,8 +50,8 @@ struct MusicActivityWings: View {
                 .frame(width: side, height: side)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         } else {
-            // SF Symbol `music.note` on a red/pink tile — a stand-in, not Apple's logo asset.
-            AppleMusicGlyph(size: side)
+            // The source app's icon; the SF Symbol stand-in when unknown.
+            AppIconImage(bundleID: info.sourceBundleID, size: side, fallback: .musicGlyph)
         }
     }
 }

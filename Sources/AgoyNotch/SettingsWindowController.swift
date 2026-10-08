@@ -18,7 +18,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// activation-policy change can reorder or hide windows).
     private let onActivationPolicyChange: @MainActor () -> Void
 
-    init(settings: AppSettings, onActivationPolicyChange: @escaping @MainActor () -> Void) {
+    init(settings: AppSettings,
+         nowPlaying: NowPlayingManager,
+         onActivationPolicyChange: @escaping @MainActor () -> Void) {
         self.onActivationPolicyChange = onActivationPolicyChange
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 640),
@@ -33,7 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.contentMinSize = NSSize(width: 480, height: 480)
         // Reused across open/close; the controller keeps it alive.
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(settings: settings))
+        window.contentView = NSHostingView(rootView: SettingsView(settings: settings, nowPlaying: nowPlaying))
         window.center()
 
         super.init(window: window)

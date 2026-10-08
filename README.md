@@ -6,10 +6,12 @@ When idle AgoyNotch draws **nothing** (unless music is playing) — you see only
 the notch and a black panel grows out of it with a spring animation: one continuous black
 shape whose top edge is the very top of the screen (it covers the notch and the menu-bar
 strip beside it), with the content laid out just below the camera cutout. The panel shows
-Apple Music's Now Playing (album art, title, album, artist, prev / play-pause / next) and,
+Now Playing from any app — Apple Music, Spotify, Apple TV, YouTube / SoundCloud in a browser
+(album art, title, album, artist, the app's icon, prev / play-pause / next) and,
 beside it, a **live clock (ticking every second) and a compact calendar**. Move away and it
 shrinks back into the notch. It is a native macOS app written in Swift (AppKit + SwiftUI),
-with **no third-party dependencies**.
+with no Swift package dependencies (one small vendored, BSD-licensed helper — see
+[Now Playing & permissions](#now-playing--permissions)).
 
 > **Why this exists:** closed-source "notch" utilities ask you to trust a binary. AgoyNotch is
 > the opposite — the entire source is here, it makes **no network calls** and collects **no
@@ -37,7 +39,8 @@ with **no third-party dependencies**.
 ```
 
 This runs `swift build -c release`, assembles `build/AgoyNotch.app` (binary +
-`Resources/Info.plist` + `AppIcon.icns`), ad-hoc signs it, copies it to `/Applications` (replacing any old
+`Resources/Info.plist` + `AppIcon.icns` + the Now Playing helper, built with `clang` from
+`Vendor/mediaremote-adapter`), ad-hoc signs it, copies it to `/Applications` (replacing any old
 copy, quitting a running one first), removes the `build/AgoyNotch.app` copy once it is
 installed, and opens it. Options:
 
@@ -45,6 +48,8 @@ installed, and opens it. Options:
 - `--universal` — build for both arm64 and x86_64
 - `--face PHOTO` — make the app icon from a photo of you (see [App icon](#app-icon))
 - `--help` — usage
+
+**Update** to the latest code: `git pull && ./scripts/build-app.sh --install`.
 
 After that, open **AgoyNotch** from Launchpad, Spotlight or `/Applications` like any app.
 It has no Dock icon while idle; it lives in the menu bar.
@@ -72,8 +77,9 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Hover area → Height | 10–80 pt (your notch height) | Height of that zone, from the very top of the screen (the top edge is always included). Applied live, with the same outline. |
 | Match notch | — | Resets width/height to the detected notch size (shown above the button). |
 | Hover area → Show hover zone | off | Keeps the hover zone outlined on screen while the panel is closed. Parts that overlap the physical notch are hidden behind it. |
-| Music activity → Show music activity beside the notch | on | While Apple Music plays and the panel is closed, shows the black pill beside the notch (see below). |
+| Music activity → Show music activity beside the notch | on | While any Now Playing app plays and the panel is closed, shows the black pill beside the notch (see below). |
 | Music activity → Equalizer colour | white | Colour of the pill's equalizer bars. |
+| Music activity → Now Playing source | — | Read-only line: *all apps* when the helper runs, otherwise *Apple Music only* and why. |
 | Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
 | Close delay | 0–2 s, step 0.05 (0.35) | How long after the cursor leaves the panel before it closes. 0 = instant. Coming back earlier keeps it open. |
 | Animation duration | 0–1 s (0.35) | Speed of the grow/shrink spring. 0 = no animation. |
@@ -104,10 +110,10 @@ The Settings window can be resized, minimized and zoomed.
 
 ## Music activity (collapsed)
 
-While the panel is closed and **Apple Music is playing**, AgoyNotch shows a compact black
+While the panel is closed and **something is playing** (any Now Playing app), AgoyNotch shows a compact black
 pill fused with the hardware notch: exactly the notch's height, flush with the top of the
 screen, with a wing on each side. The left wing shows the album artwork (or, without
-artwork, an SF Symbol `music.note` on a red/pink tile — a stand-in, not Apple's Music logo);
+artwork, the playing app's icon; an SF Symbol `music.note` tile when that is unknown);
 the right wing shows four animated equalizer bars (Settings → Equalizer colour). The bars
 only animate while the pill is visible. Paused or nothing playing: nothing is drawn, as
 before. Opening the panel grows it out of the pill. Turn it off with *Show music activity
@@ -132,34 +138,35 @@ is a static placeholder, not a read of your real events.
 
 ## Now Playing & permissions
 
-**Now Playing uses AppleScript to Apple Music** (`Music.app`). AgoyNotch polls Music's
-`player state` and the current track's name / artist / album, and reads album art as raw
-local image bytes via `data of artwork 1 of current track`. Apple Music works best; this is
-the live data source on macOS 27.
+**All apps (default).** AgoyNotch runs the vendored
+[ungive/mediaremote-adapter](https://github.com/ungive/mediaremote-adapter) (BSD-3, commit
+`e3ff502`, in `Vendor/`) as a child process: `/usr/bin/perl mediaremote-adapter.pl
+MediaRemoteAdapter.framework stream`. Since macOS 15.4 apps can no longer read the system
+Now Playing state directly; the Apple-signed `perl` still can, and streams it to AgoyNotch as
+JSON lines. That covers Apple Music, Spotify, Apple TV and browser players (YouTube,
+SoundCloud, Spotify Web…). The panel shows the title, artist, artwork and the playing app's
+icon, and prev / play-pause / next go to that app. Nothing leaves your Mac. The helper is
+stopped when AgoyNotch quits; if it crashes it is restarted (at most 3 times a minute).
 
-- **Grant Automation permission on first run.** The first time AgoyNotch sends an AppleScript
-  command to Music, macOS shows an **Automation** consent prompt — click **OK / Allow**. You
-  can review or re-enable it later under **System Settings → Privacy & Security → Automation**.
-  If you deny it, the panel honestly shows **"Nothing playing"** instead of crashing.
-- **Use the built `.app`.** The Automation grant is attached to the bundle identifier
-  `com.azhazhell.agoynotch`, and the prompt text comes from `NSAppleEventsUsageDescription`
-  in `Resources/Info.plist`. Running the bare executable from Xcode works but the prompt can
-  be flaky there. Because the build script signs ad-hoc, each rebuild changes the signature,
-  so macOS will likely ask again after every `--install` — just allow it. If the prompt stops
-  appearing and Now Playing stays empty, reset the grant with
-  `tccutil reset AppleEvents com.azhazhell.agoynotch` and relaunch. If Music isn't running or access is
-  denied (error `-1743`), AgoyNotch logs a short message and shows "Nothing playing".
-- **Graceful behavior.** If Music is stopped, not running, or unauthorized, the panel shows
-  "Nothing playing" — it never forces Music to launch just to query it.
+**Apple Music fallback.** AgoyNotch also polls Apple Music with AppleScript. When the helper
+is missing (`swift run` / Xcode dev flow, or its build failed — `build-app.sh` then prints a
+`warning:`) or fails, Apple Music still works, and Settings → Music activity shows
+"Now Playing source: Apple Music only — <reason>". When both have media, whatever is playing
+wins.
 
-### Why AppleScript (historical MediaRemote note)
+- **Automation permission** is needed only for that Apple Music fallback. The first
+  AppleScript call to Music shows an **Automation** prompt — click **OK / Allow** (review it
+  under **System Settings → Privacy & Security → Automation**). Because the build is signed
+  ad-hoc, macOS may ask again after each `--install`. If it stops asking and Apple Music
+  stays empty, run `tccutil reset AppleEvents com.azhazhell.agoynotch` and relaunch.
+- **Graceful behavior.** Nothing playing, Music not running or access denied → the panel
+  shows "Nothing playing"; AgoyNotch never launches Music just to query it.
 
-Earlier builds read Now Playing through Apple's **private** `MediaRemote` framework
-(`dlopen`/`dlsym`; see `MediaRemoteBridge.swift`, kept as dormant historical code). Since
-**macOS 15.4** the system `mediaremoted` daemon verifies caller entitlements before handing
-back Now Playing data, so on **macOS 27** an unentitled build receives **empty** info and the
-panel always read "Nothing playing". AppleScript to a scriptable player still works, so it is
-now the live source. `MediaRemoteBridge` remains in the tree only to document that path.
+### Troubleshooting
+
+- Check the Settings line *Now Playing source*.
+- `pgrep -f mediaremote-adapter` shows the running helper (and nothing after Quit).
+- `killall Dock` if Finder or the Dock shows a stale icon.
 
 ## Xcode dev flow
 
@@ -206,15 +213,23 @@ Finder or the Dock still shows an old icon, run `killall Dock`.
 ## App Store & signing note
 
 The build script signs ad-hoc, which is enough for personal use on your own Mac. The
-dormant `MediaRemoteBridge` uses a **private Apple framework**, which is **not eligible for
-the Mac App Store**; to distribute outside the store, sign with a Developer ID and notarize.
+Now Playing helper uses Apple's **private** MediaRemote framework, which is **not eligible
+for the Mac App Store**; to distribute outside the store, sign with a Developer ID and notarize.
 
 ## Privacy
 
 - **No network calls.** There is no `URLSession`, no sockets, nothing phones home.
 - **No telemetry.** Nothing is logged off-device.
-- **Fully local & transparent.** The only other app AgoyNotch talks to is Apple Music on
-  your Mac (via AppleScript), using the open source in this repository.
+- **Fully local & transparent.** AgoyNotch reads the system Now Playing state through the
+  local helper and talks to Apple Music on your Mac via AppleScript, using the open source in
+  this repository.
+
+## Third-party
+
+- [mediaremote-adapter](https://github.com/ungive/mediaremote-adapter) by Jonas van den
+  Berg, BSD-3-Clause, vendored unmodified in `Vendor/mediaremote-adapter` (see its
+  `UPSTREAM.md`). Its licence ships in the app as
+  `Contents/Resources/MediaRemoteAdapter-LICENSE.txt`.
 
 ## How to quit
 
@@ -244,6 +259,7 @@ AgoyNotch/
   scripts/build-app.sh                builds, signs and (optionally) installs AgoyNotch.app
   scripts/make-icon.py                renders AppIcon.png (Python 3 stdlib only)
   scripts/make-face-icon.swift        photo → face app icon (Vision; run by build-app.sh --face)
+  Vendor/mediaremote-adapter/         vendored Now Playing helper (BSD-3; UPSTREAM.md)
   Sources/AgoyNotch/
     AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate; ⌘, → Settings
     AppDelegate.swift                 object graph, status item (About / Settings… / Quit), reopen
@@ -257,9 +273,11 @@ AgoyNotch/
     NotchView.swift                   SwiftUI black panel growing out of the notch (Now Playing + clock)
     MusicActivityView.swift           collapsed music pill: artwork wing + animated equalizer
     ClockCalendarView.swift           right column: live ticking clock + compact calendar
+    AppIconViews.swift                the playing app's icon (panel + pill)
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
-      AppleScriptNowPlaying.swift     LIVE source: AppleScript → Apple Music (status + transport)
-      MediaRemoteBridge.swift         dormant historical private-MediaRemote dlopen/dlsym boundary
-      NowPlayingManager.swift         observable Now Playing service (polls AppleScript) + transport
+      AdapterStream.swift             helper JSON lines → snapshot, source precedence (pure)
+      MediaRemoteAdapterClient.swift  runs the helper child process, restarts, commands
+      AppleScriptNowPlaying.swift     Apple Music fallback: AppleScript (status + transport)
+      NowPlayingManager.swift         observable Now Playing service (helper + AppleScript) + transport
 ```

@@ -67,10 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Settings
 
     @objc func showSettings() {
-        guard let settings else { return }
+        guard let settings, let nowPlaying else { return }
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(
                 settings: settings,
+                nowPlaying: nowPlaying,
                 onActivationPolicyChange: { [weak self] in
                     self?.windowController?.ensureVisible()
                 }

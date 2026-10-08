@@ -3,26 +3,35 @@
 //  AgoyNotch
 //
 //  Plain, UI-agnostic data model describing the current Now Playing state.
-//  Populated by NowPlayingManager from the private MediaRemote framework and
-//  consumed by the SwiftUI views. Everything here is local-only — no network,
-//  no telemetry.
+//  Populated by NowPlayingManager from the Now Playing helper (any app) or the Apple Music
+//  AppleScript fallback, and consumed by the SwiftUI views. Everything here is local-only —
+//  no network, no telemetry.
 //
 
 import AppKit
 
+/// Where a `NowPlayingInfo` came from.
+enum NowPlayingSource: Equatable, Sendable {
+    case none
+    case mediaRemote
+    case appleMusicScript
+}
+
 /// A snapshot of the system's current Now Playing media.
 ///
-/// `NSImage` is not `Equatable`, so `Equatable` is implemented by hand. Artwork is
-/// intentionally compared by its backing data (TIFF representation) rather than by
-/// reference, so that two decodes of the same bytes compare equal and SwiftUI does
-/// not needlessly re-render. Comparing full TIFF data on every change is cheap
-/// relative to how rarely Now Playing info changes.
-struct NowPlayingInfo: Equatable {
+/// `NSImage` is not `Equatable`, so `Equatable` is implemented by hand. Artwork is compared
+/// by `artworkKey` (a hash over the image bytes) plus nil-ness, never by re-encoding it.
+/// `@unchecked Sendable`: the NSImage is never mutated after creation.
+struct NowPlayingInfo: Equatable, @unchecked Sendable {
     var title: String?
     var artist: String?
     var album: String?
     var artwork: NSImage?
     var isPlaying: Bool
+    var source: NowPlayingSource = .none
+    /// Bundle ID of the app playing (for its icon), e.g. com.google.Chrome.
+    var sourceBundleID: String? = nil
+    var artworkKey: Int? = nil
 
     /// The empty / "nothing is playing" state.
     static let empty = NowPlayingInfo(
@@ -56,6 +65,9 @@ struct NowPlayingInfo: Equatable {
         lhs.artist == rhs.artist &&
         lhs.album == rhs.album &&
         lhs.isPlaying == rhs.isPlaying &&
-        lhs.artwork?.tiffRepresentation == rhs.artwork?.tiffRepresentation
+        lhs.source == rhs.source &&
+        lhs.sourceBundleID == rhs.sourceBundleID &&
+        lhs.artworkKey == rhs.artworkKey &&
+        (lhs.artwork == nil) == (rhs.artwork == nil)
     }
 }
