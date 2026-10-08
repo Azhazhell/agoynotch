@@ -61,6 +61,15 @@ struct NotchView: View {
             // Laid out at the full panel size at all times so it never reflows mid-morph;
             // the clip below reveals it as the shape grows.
             .frame(width: panelSize.width, height: panelSize.height, alignment: .top)
+            // Messages / WhatsApp unread badges in the black top band, left of the camera;
+            // vertically centred in the notch height, 8 pt clear of the camera. Fades with
+            // the content and is clipped away while collapsed.
+            .overlay(alignment: .topLeading) {
+                MessageBadgesRow(badges: viewModel.messageBadges.badges)
+                    .frame(width: max(viewModel.leftBandWidth - 28, 0),
+                           height: viewModel.notchSize.height, alignment: .leading)
+                    .padding(.leading, 20)
+            }
             .opacity(expanded ? 1 : 0)
             // The pill's wings, top-centred on the panel-sized frame, so after the `size`
             // frame + clip below they sit exactly beside the notch. Hidden while expanded.
@@ -92,6 +101,12 @@ struct NotchView: View {
                 hoverZonePreview
                     .animation(.easeOut(duration: 0.2), value: showsHoverZoneOutline)
             }
+            // Optional (Settings, off by default): a red dot just right of the notch while
+            // collapsed and any message badge is showing. Purely visual.
+            .overlay(alignment: .top) {
+                collapsedBadgeDot
+                    .animation(.easeOut(duration: 0.2), value: showsCollapsedBadgeDot)
+            }
             // Full-bleed overlay: never let a reported safe area push the shape down.
             .ignoresSafeArea()
             .animation(viewModel.settings.animation, value: expanded)
@@ -121,6 +136,27 @@ struct NotchView: View {
                 )
                 .frame(width: viewModel.hoverSize.width, height: viewModel.hoverSize.height)
                 .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
+    // MARK: - Collapsed message dot
+
+    private var showsCollapsedBadgeDot: Bool {
+        !viewModel.isExpanded && viewModel.settings.showCollapsedBadgeDot
+            && !viewModel.messageBadges.badges.isEmpty
+    }
+
+    /// The window is centred at `screen.midX + offset` and the notch at `screen.midX`, so the
+    /// dot's x offset from the window centre is the notch's right edge minus the offset.
+    @ViewBuilder
+    private var collapsedBadgeDot: some View {
+        if showsCollapsedBadgeDot {
+            let notch = viewModel.notchSize
+            MessageBadgeDot()
+                .offset(x: notch.width / 2 - CGFloat(viewModel.settings.horizontalOffset)
+                            + 3 + MessageBadgeDot.size / 2,
+                        y: (notch.height - MessageBadgeDot.size) / 2)
                 .transition(.opacity)
         }
     }

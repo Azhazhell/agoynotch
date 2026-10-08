@@ -4,7 +4,7 @@
 //
 //  The single source of truth for every user setting (hover zone size + outline, open/close
 //  delays, animation speed, position/size fine-tuning, Clock & Calendar colours, the music
-//  activity pill + equalizer colour, launch behaviour). Colours are stored as sRGB "RRGGBBAA" hex strings. Each value is a
+//  activity pill + equalizer colour, message badges, launch behaviour). Colours are stored as sRGB "RRGGBBAA" hex strings. Each value is a
 //  `@Published` property persisted to UserDefaults in its `didSet`, so the Settings window
 //  binds to it directly and every change is applied LIVE: NotchViewModel forwards
 //  `objectWillChange` (the view redraws), NotchWindowController subscribes to the geometry
@@ -45,6 +45,11 @@ final class AppSettings: ObservableObject {
         static let weekdayColor = "AgoyNotch.v2.weekdayColor"
         static let todayHighlightColor = "AgoyNotch.v2.todayHighlightColor"
         static let todayTextColor = "AgoyNotch.v2.todayTextColor"
+        // Message badges (Messages / WhatsApp Dock badge counts).
+        static let showMessageBadges = "AgoyNotch.v2.showMessageBadges"
+        static let badgeMessages = "AgoyNotch.v2.badgeMessages"
+        static let badgeWhatsApp = "AgoyNotch.v2.badgeWhatsApp"
+        static let showCollapsedBadgeDot = "AgoyNotch.v2.showCollapsedBadgeDot"
 
         /// Keys from removed settings, cleared on every launch (idempotent). Includes the old
         /// `NotchSettings` struct and the removed hover vertical offset, whose stored value
@@ -95,6 +100,10 @@ final class AppSettings: ObservableObject {
         static let weekdayColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 0.5)
         static let todayHighlightColor = Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
         static let todayTextColor = Color(.sRGB, red: 0, green: 0, blue: 0, opacity: 1)
+        static let showMessageBadges = false
+        static let badgeMessages = true
+        static let badgeWhatsApp = true
+        static let showCollapsedBadgeDot = false
     }
 
     private let defaults: UserDefaults
@@ -138,6 +147,31 @@ final class AppSettings: ObservableObject {
     /// Colour of the equalizer bars in the music activity pill.
     @Published var equalizerColor: Color = Default.equalizerColor {
         didSet { storeColor(equalizerColor, Key.equalizerColor) }
+    }
+
+    // MARK: - Message badges
+
+    /// Master toggle: show the Messages / WhatsApp unread counts in the open panel. Off by
+    /// default; while off, no Accessibility prompt and no Dock reads.
+    @Published var showMessageBadges: Bool = Default.showMessageBadges {
+        didSet { defaults.set(showMessageBadges, forKey: Key.showMessageBadges) }
+    }
+    /// Per-app toggle: Messages (iMessage).
+    @Published var badgeMessages: Bool = Default.badgeMessages {
+        didSet { defaults.set(badgeMessages, forKey: Key.badgeMessages) }
+    }
+    /// Per-app toggle: WhatsApp.
+    @Published var badgeWhatsApp: Bool = Default.badgeWhatsApp {
+        didSet { defaults.set(badgeWhatsApp, forKey: Key.badgeWhatsApp) }
+    }
+    /// While collapsed, a small red dot beside the notch when any badge is showing.
+    @Published var showCollapsedBadgeDot: Bool = Default.showCollapsedBadgeDot {
+        didSet { defaults.set(showCollapsedBadgeDot, forKey: Key.showCollapsedBadgeDot) }
+    }
+
+    /// Whether `app`'s badge should be shown (master toggle AND the app's toggle).
+    func isBadgeEnabled(_ app: MessageApp) -> Bool {
+        showMessageBadges && (app == .messages ? badgeMessages : badgeWhatsApp)
     }
 
     // MARK: - Clock & Calendar colours (persisted as sRGB hex)
@@ -223,6 +257,12 @@ final class AppSettings: ObservableObject {
         showHoverZone = defaults.object(forKey: Key.showHoverZone) as? Bool ?? Default.showHoverZone
         showMusicActivity = defaults.object(forKey: Key.showMusicActivity) as? Bool
             ?? Default.showMusicActivity
+        showMessageBadges = defaults.object(forKey: Key.showMessageBadges) as? Bool
+            ?? Default.showMessageBadges
+        badgeMessages = defaults.object(forKey: Key.badgeMessages) as? Bool ?? Default.badgeMessages
+        badgeWhatsApp = defaults.object(forKey: Key.badgeWhatsApp) as? Bool ?? Default.badgeWhatsApp
+        showCollapsedBadgeDot = defaults.object(forKey: Key.showCollapsedBadgeDot) as? Bool
+            ?? Default.showCollapsedBadgeDot
 
         func loadColor(_ key: String, _ fallback: Color) -> Color {
             defaults.string(forKey: key).flatMap { Self.color(fromHex: $0) } ?? fallback
@@ -272,6 +312,10 @@ final class AppSettings: ObservableObject {
         showSettingsOnLaunch = Default.showSettingsOnLaunch
         showMusicActivity = Default.showMusicActivity
         equalizerColor = Default.equalizerColor
+        showMessageBadges = Default.showMessageBadges
+        badgeMessages = Default.badgeMessages
+        badgeWhatsApp = Default.badgeWhatsApp
+        showCollapsedBadgeDot = Default.showCollapsedBadgeDot
         resetAppearance()
     }
 

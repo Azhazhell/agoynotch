@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     init(settings: AppSettings,
          nowPlaying: NowPlayingManager,
+         messageBadges: MessageBadgeMonitor,
          onActivationPolicyChange: @escaping @MainActor () -> Void) {
         self.onActivationPolicyChange = onActivationPolicyChange
         let window = NSWindow(
@@ -35,7 +36,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.contentMinSize = NSSize(width: 480, height: 480)
         // Reused across open/close; the controller keeps it alive.
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(settings: settings, nowPlaying: nowPlaying))
+        window.contentView = NSHostingView(rootView: SettingsView(
+            settings: settings, nowPlaying: nowPlaying, messageBadges: messageBadges))
         window.center()
 
         super.init(window: window)

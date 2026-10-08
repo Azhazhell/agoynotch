@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Strong references so none of these are deallocated while the app runs.
     private var settings: AppSettings!
     private var nowPlaying: NowPlayingManager!
+    private var messageBadges: MessageBadgeMonitor!
     private var viewModel: NotchViewModel!
     private var windowController: NotchWindowController!
     private var statusItem: NSStatusItem!
@@ -33,16 +34,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Build the object graph.
         let settings = AppSettings()
         let nowPlaying = NowPlayingManager()
-        let viewModel = NotchViewModel(nowPlaying: nowPlaying, settings: settings)
+        let messageBadges = MessageBadgeMonitor(settings: settings)
+        let viewModel = NotchViewModel(nowPlaying: nowPlaying, settings: settings,
+                                       messageBadges: messageBadges)
         let windowController = NotchWindowController(viewModel: viewModel, settings: settings)
 
         self.settings = settings
         self.nowPlaying = nowPlaying
+        self.messageBadges = messageBadges
         self.viewModel = viewModel
         self.windowController = windowController
 
         // Start the media service and show the notch overlay.
         nowPlaying.start()
+        // Reads nothing (and prompts for nothing) while message badges are off.
+        messageBadges.start()
         windowController.show()
 
         setupStatusItem()
@@ -62,16 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         nowPlaying?.stop()
+        messageBadges?.stop()
     }
 
     // MARK: - Settings
 
     @objc func showSettings() {
-        guard let settings, let nowPlaying else { return }
+        guard let settings, let nowPlaying, let messageBadges else { return }
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(
                 settings: settings,
                 nowPlaying: nowPlaying,
+                messageBadges: messageBadges,
                 onActivationPolicyChange: { [weak self] in
                     self?.windowController?.ensureVisible()
                 }

@@ -15,6 +15,7 @@ struct SettingsView: View {
 
     @ObservedObject var settings: AppSettings
     @ObservedObject var nowPlaying: NowPlayingManager
+    @ObservedObject var messageBadges: MessageBadgeMonitor
 
     /// Launch-at-login state. The source of truth is SMAppService, not UserDefaults.
     @State private var loginEnabled = (SMAppService.mainApp.status == .enabled)
@@ -28,6 +29,7 @@ struct SettingsView: View {
         Form {
             hoverSection
             musicActivitySection
+            messageBadgesSection
             timingSection
             appearanceSection
             positionSection
@@ -121,6 +123,41 @@ struct SettingsView: View {
                  + "SoundCloud / Spotify in a browser) and the panel is closed, a small black pill beside the notch "
                  + "shows the artwork and a moving equalizer. Hovering it opens the panel. "
                  + "Paused or nothing playing = nothing is shown.")
+        }
+    }
+
+    private var messageBadgesSection: some View {
+        Section {
+            Toggle("Show message badges in the open panel", isOn: $settings.showMessageBadges)
+            Toggle(MessageApp.messages.settingsTitle, isOn: $settings.badgeMessages)
+                .disabled(!settings.showMessageBadges)
+            Toggle(MessageApp.whatsapp.settingsTitle, isOn: $settings.badgeWhatsApp)
+                .disabled(!settings.showMessageBadges)
+            Toggle("Red dot beside the notch while closed", isOn: $settings.showCollapsedBadgeDot)
+                .disabled(!settings.showMessageBadges)
+            if settings.showMessageBadges {
+                if messageBadges.isTrusted {
+                    Label("Accessibility access granted", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    HStack {
+                        Label("Accessibility access needed", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Grant access…") { messageBadges.requestAccess() }
+                    }
+                }
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("While the panel is open, shows the Messages and WhatsApp icons with the unread count from "
+                 + "their Dock badge. The apps must be running (in the background is fine). "
+                 + "Only the number is read, never your messages. Needs Accessibility access; "
+                 + "macOS asks again after every reinstall. The count only shows when System Settings → "
+                 + "Notifications → Messages / WhatsApp → Badge application icon is on. "
+                 + "The red dot needs room beside the notch (Show music activity on, or a hover zone wider "
+                 + "than the notch). If you just allowed access and nothing appears, quit and reopen AgoyNotch.")
         }
     }
 

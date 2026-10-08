@@ -14,6 +14,10 @@
 # mediaremote-adapter, Vendor/) is built into Contents/Frameworks with clang; if that fails
 # the app still builds and falls back to Apple Music only.
 #
+# Optional: AGOYNOTCH_SIGN_IDENTITY="<Keychain code-signing certificate name>" signs with a
+# stable identity instead of ad-hoc, so the Accessibility (message badges) and Automation
+# grants survive rebuilds; --install then does not reset the Accessibility grant.
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +25,7 @@ cd "$ROOT"
 
 APP_NAME="AgoyNotch"
 BUNDLE_ID="com.azhazhell.agoynotch"
+SIGN_IDENTITY="${AGOYNOTCH_SIGN_IDENTITY:-}"
 APP="$ROOT/build/$APP_NAME.app"
 INSTALLED_APP="/Applications/$APP_NAME.app"
 
@@ -163,8 +168,14 @@ else
     exit 1
 fi
 
-# --- Ad-hoc sign (needed for a stable identity: Automation permission, login item) -------
-codesign --force --deep --sign - "$APP"
+# --- Sign (ad-hoc by default; AGOYNOTCH_SIGN_IDENTITY for a stable identity) -------------
+if [[ -n "$SIGN_IDENTITY" ]]; then
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$APP" \
+        || { echo "error: could not sign with AGOYNOTCH_SIGN_IDENTITY=\"$SIGN_IDENTITY\" (see README → Stable signing)" >&2; exit 1; }
+    echo "Signed with: $SIGN_IDENTITY"
+else
+    codesign --force --deep --sign - "$APP"
+fi
 codesign --verify --verbose "$APP"
 
 # Helper self-test (only when it was built). `get` has an internal 2 s timeout. Non-fatal.
@@ -185,6 +196,12 @@ if [[ "$INSTALL" -eq 1 ]]; then
     fi
     # A force-quit copy skips applicationWillTerminate; stop its orphaned Now Playing helper.
     pkill -f "$INSTALLED_APP/Contents/Resources/mediaremote-adapter.pl" >/dev/null 2>&1 || true
+    # An ad-hoc signature changes on every build, which leaves a stale Accessibility grant
+    # (shown "on" but no longer working). Reset it so the next launch with message badges on
+    # prompts cleanly. A stable signing identity keeps the grant valid, so skip the reset.
+    if [[ -z "$SIGN_IDENTITY" ]]; then
+        tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
+    fi
 
     # Replace the installed copy and launch it.
     rm -rf "$INSTALLED_APP"

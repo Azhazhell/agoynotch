@@ -41,7 +41,8 @@ with no Swift package dependencies (one small vendored, BSD-licensed helper — 
 This runs `swift build -c release`, assembles `build/AgoyNotch.app` (binary +
 `Resources/Info.plist` + `AppIcon.icns` + the Now Playing helper, built with `clang` from
 `Vendor/mediaremote-adapter`), ad-hoc signs it, copies it to `/Applications` (replacing any old
-copy, quitting a running one first), removes the `build/AgoyNotch.app` copy once it is
+copy, quitting a running one first), resets AgoyNotch's Accessibility grant (see
+[Message badges](#message-badges)), removes the `build/AgoyNotch.app` copy once it is
 installed, and opens it. Options:
 
 - no flag — only build `build/AgoyNotch.app`
@@ -80,6 +81,9 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Music activity → Show music activity beside the notch | on | While any Now Playing app plays and the panel is closed, shows the black pill beside the notch (see below). |
 | Music activity → Equalizer colour | white | Colour of the pill's equalizer bars. |
 | Music activity → Now Playing source | — | Read-only line: *all apps* when the helper runs, otherwise *Apple Music only* and why. |
+| Notifications → Show message badges in the open panel | off | Shows the Messages / WhatsApp icon with its unread count in the open panel (see [Message badges](#message-badges)). |
+| Notifications → Messages (iMessage) / WhatsApp | on / on | Per-app switches, used while the master toggle is on. |
+| Notifications → Red dot beside the notch while closed | off | A small red dot right of the notch while the panel is closed and any badge is showing. |
 | Open delay | 0–2 s, step 0.05 (0) | How long the cursor must rest on the notch before it opens. 0 = instant. Leaving earlier cancels the open. |
 | Close delay | 0–2 s, step 0.05 (0.35) | How long after the cursor leaves the panel before it closes. 0 = instant. Coming back earlier keeps it open. |
 | Animation duration | 0–1 s (0.35) | Speed of the grow/shrink spring. 0 = no animation. |
@@ -92,7 +96,7 @@ Every change is saved (local `UserDefaults`) and applied **immediately** — no 
 | Clock & Calendar → Weekday letters | white 50 % | The letters above the week strip. |
 | Clock & Calendar → Today highlight / Today number | white / black | The circle behind today's date and the number on it. |
 | Reset colours | — | Restores only the six colours. A live preview sits at the top of the section. |
-| Reset to defaults | — | Restores every value above, colours, Show hover zone and the music activity settings included (except launch at login). |
+| Reset to defaults | — | Restores every value above, colours, Show hover zone, the music activity and the notification settings included (except launch at login). |
 
 While collapsed only the hover zone reacts to the cursor; once open, the whole panel does,
 so you can move down to the transport buttons without it closing. The hover zone **always
@@ -118,6 +122,24 @@ the right wing shows four animated equalizer bars (Settings → Equalizer colour
 only animate while the pill is visible. Paused or nothing playing: nothing is drawn, as
 before. Opening the panel grows it out of the pill. Turn it off with *Show music activity
 beside the notch*.
+
+## Message badges
+
+Settings → **Notifications** → *Show message badges in the open panel* (off by default). While
+the panel is open, the Messages (iMessage) and WhatsApp icons appear in the black band left of
+the camera with their unread count — only the logo and the number, and only for apps with
+unread messages. Counts above 99 show as `99+`.
+
+- **Where the number comes from:** the app's red **Dock badge**, read through the
+  Accessibility API every 3 s (and when the panel opens). The app must be running (in the
+  background is fine), and *System Settings → Notifications → Messages / WhatsApp → Badge
+  application icon* must be on. Message text and senders are never read.
+- **Accessibility access:** turning the feature on shows the macOS prompt once; Settings shows
+  *Accessibility access needed* with a **Grant access…** button until it is allowed (System
+  Settings → Privacy & Security → Accessibility). While the feature is off, AgoyNotch never
+  asks and never reads the Dock.
+- **After every `--install`** the build is signed ad-hoc (a new signature), so the script
+  resets the grant and macOS asks again. To keep it, use [stable signing](#stable-signing-optional).
 
 ## Live clock & calendar
 
@@ -167,6 +189,11 @@ wins.
 - Check the Settings line *Now Playing source*.
 - `pgrep -f mediaremote-adapter` shows the running helper (and nothing after Quit).
 - `killall Dock` if Finder or the Dock shows a stale icon.
+- No message badge: check that the Dock itself shows the red count; it only does when
+  *System Settings → Notifications → Messages / WhatsApp → Badge application icon* is on,
+  because AgoyNotch only reads the Dock badge.
+- Badges stay empty although access looks granted: `tccutil reset Accessibility
+  com.azhazhell.agoynotch`, relaunch AgoyNotch and allow it again.
 
 ## Xcode dev flow
 
@@ -216,6 +243,22 @@ The build script signs ad-hoc, which is enough for personal use on your own Mac.
 Now Playing helper uses Apple's **private** MediaRemote framework, which is **not eligible
 for the Mac App Store**; to distribute outside the store, sign with a Developer ID and notarize.
 
+### Stable signing (optional)
+
+An ad-hoc signature changes on every build, so macOS forgets the Accessibility and Automation
+grants after each `--install`. To keep them, sign with your own certificate:
+
+1. **Keychain Access → Certificate Assistant → Create a Certificate…**: name it e.g.
+   `AgoyNotch Local`, Identity Type *Self Signed Root*, Certificate Type **Code Signing**.
+2. Build with it:
+   ```sh
+   AGOYNOTCH_SIGN_IDENTITY="AgoyNotch Local" ./scripts/build-app.sh --install
+   ```
+   With an identity set, `--install` does not reset the Accessibility grant.
+3. The first time (switching from ad-hoc), reset the old grants once and allow them again:
+   `tccutil reset Accessibility com.azhazhell.agoynotch` and
+   `tccutil reset AppleEvents com.azhazhell.agoynotch`.
+
 ## Privacy
 
 - **No network calls.** There is no `URLSession`, no sockets, nothing phones home.
@@ -223,6 +266,8 @@ for the Mac App Store**; to distribute outside the store, sign with a Developer 
 - **Fully local & transparent.** AgoyNotch reads the system Now Playing state through the
   local helper and talks to Apple Music on your Mac via AppleScript, using the open source in
   this repository.
+- **Message badges** (off by default) read only the unread **count** from the Dock badge —
+  never message text, senders or chat databases.
 
 ## Third-party
 
@@ -245,7 +290,6 @@ these can be added as additional "modes" of the notch surface:
 - **File drop shelf** — drag files onto the notch to stage them.
 - **Battery / charging HUD** — a glance at charge state and time remaining.
 - **Timers** — quick countdowns surfaced in the island.
-- **Notifications** — compact notification previews in the expanded panel.
 
 ## Project layout
 
@@ -274,6 +318,11 @@ AgoyNotch/
     MusicActivityView.swift           collapsed music pill: artwork wing + animated equalizer
     ClockCalendarView.swift           right column: live ticking clock + compact calendar
     AppIconViews.swift                the playing app's icon (panel + pill)
+    Notifications/
+      MessageBadge.swift              badge model + label normalisation (pure)
+      DockBadgeReader.swift           reads Dock badge text via Accessibility (background queue)
+      MessageBadgeMonitor.swift       polls while enabled, Accessibility prompt/status
+      MessageBadgesView.swift         panel badge row (logo + count) and the collapsed dot
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
       AdapterStream.swift             helper JSON lines → snapshot, source precedence (pure)

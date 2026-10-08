@@ -4,8 +4,8 @@
 //
 //  UI state for the notch surface: collapsed vs. expanded, the hover state machine (open
 //  delay / close delay, each cancellable), and the sizes the view and window controller
-//  need — all derived live from AppSettings. Holds the NowPlayingManager so the SwiftUI
-//  view can observe media through the view model.
+//  need — all derived live from AppSettings. Holds the NowPlayingManager and the
+//  MessageBadgeMonitor so the SwiftUI view can observe media and badges through the view model.
 //
 
 import AppKit
@@ -28,6 +28,9 @@ final class NotchViewModel: ObservableObject {
     /// User settings (delays, animation, geometry). Read at the moment they are used, so
     /// changes made in the Settings window apply immediately.
     let settings: AppSettings
+
+    /// Messages / WhatsApp unread badges for the open panel.
+    let messageBadges: MessageBadgeMonitor
 
     // MARK: - Geometry (all derived from settings)
 
@@ -92,6 +95,12 @@ final class NotchViewModel: ObservableObject {
     /// buttons and the clock sit just below the camera cutout instead of behind it.
     var contentTopInset: CGFloat { notchSize.height + 8 }
 
+    /// Width of the panel's black top band left of the camera (where the message badges
+    /// sit). The window is centred at `screen.midX + offset`, the notch at `screen.midX`.
+    var leftBandWidth: CGFloat {
+        max(0, panelSize.width / 2 - notchSize.width / 2 - CGFloat(settings.horizontalOffset))
+    }
+
     // MARK: - Private
 
     /// Pending delayed open / close. `Task`s (not `DispatchWorkItem`s) keep the delayed body
@@ -112,9 +121,10 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init(nowPlaying: NowPlayingManager, settings: AppSettings) {
+    init(nowPlaying: NowPlayingManager, settings: AppSettings, messageBadges: MessageBadgeMonitor) {
         self.nowPlaying = nowPlaying
         self.settings = settings
+        self.messageBadges = messageBadges
 
         // Re-broadcast media and settings changes through this view model so a single
         // @ObservedObject in the view updates for state, media and settings changes.
@@ -123,6 +133,15 @@ final class NotchViewModel: ObservableObject {
             .store(in: &cancellables)
         settings.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        messageBadges.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        // Fresh badge counts as soon as the panel starts opening.
+        $isExpanded
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in self?.messageBadges.refreshNow() }
             .store(in: &cancellables)
     }
 
