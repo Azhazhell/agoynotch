@@ -38,10 +38,12 @@ with **no third-party dependencies**.
 
 This runs `swift build -c release`, assembles `build/AgoyNotch.app` (binary +
 `Resources/Info.plist` + `AppIcon.icns`), ad-hoc signs it, copies it to `/Applications` (replacing any old
-copy, quitting a running one first) and opens it. Options:
+copy, quitting a running one first), removes the `build/AgoyNotch.app` copy once it is
+installed, and opens it. Options:
 
 - no flag — only build `build/AgoyNotch.app`
 - `--universal` — build for both arm64 and x86_64
+- `--face PHOTO` — make the app icon from a photo of you (see [App icon](#app-icon))
 - `--help` — usage
 
 After that, open **AgoyNotch** from Launchpad, Spotlight or `/Applications` like any app.
@@ -176,11 +178,30 @@ app's `com.azhazhell.agoynotch`. Use `./scripts/build-app.sh --install` for ever
 
 ## App icon
 
-The skull icon is `Resources/AppIcon.png` (1024 × 1024, original artwork; editable source
-`Resources/AppIcon.svg`, regenerate the PNG with `python3 scripts/make-icon.py`).
-`build-app.sh` turns it into `AppIcon.icns` with `sips` + `iconutil` (it warns and continues
-without an icon if either is missing), and after `--install` refreshes LaunchServices. If
-Finder or the Dock still shows the old icon, run `killall Dock`.
+**Your face as the icon.** On your Mac:
+
+```sh
+./scripts/build-app.sh --face ~/Downloads/<photo>.jpg --install
+```
+
+`scripts/make-face-icon.swift` (compiled by the build script, Apple frameworks only) finds the
+person with Vision, replaces the background with black, crops a square around the face and
+writes the same rounded square as the skull to `Resources/AppIcon-custom.png`. Everything runs
+locally — the photo is never uploaded, and `AppIcon-custom.png` is gitignored so it is never
+committed. Later builds without `--face` keep using it. The build stops with an `error:` line
+if the photo is missing, smaller than 256 px on the short side, or has no person in it.
+(`--icon-photo PHOTO` is accepted as an alias.)
+
+**Back to the skull:** delete `Resources/AppIcon-custom.png` and run
+`./scripts/build-app.sh --install` again. The skull is `Resources/AppIcon.png` (1024 × 1024,
+original artwork; editable source `Resources/AppIcon.svg`, regenerate the PNG with
+`python3 scripts/make-icon.py`).
+
+`build-app.sh` turns the icon into `AppIcon.icns` with `sips` + `iconutil` (the build fails if
+that does not work), stamps a new `CFBundleVersion`, and on `--install` re-registers the
+installed copy with LaunchServices and removes the build copy, so macOS only knows one
+AgoyNotch. The app also sets its Dock icon itself at launch and whenever Settings opens. If
+Finder or the Dock still shows an old icon, run `killall Dock`.
 
 ## App Store & signing note
 
@@ -222,9 +243,11 @@ AgoyNotch/
   Resources/AppIcon.svg / .png        skull app icon (SVG source + rendered 1024 px PNG)
   scripts/build-app.sh                builds, signs and (optionally) installs AgoyNotch.app
   scripts/make-icon.py                renders AppIcon.png (Python 3 stdlib only)
+  scripts/make-face-icon.swift        photo → face app icon (Vision; run by build-app.sh --face)
   Sources/AgoyNotch/
     AgoyNotchApp.swift                @main; NSApplicationDelegateAdaptor → AppDelegate; ⌘, → Settings
     AppDelegate.swift                 object graph, status item (About / Settings… / Quit), reopen
+    BundledAppIcon.swift              applies the bundled AppIcon.icns as the Dock / About icon
     AppSettings.swift                 all user settings (@Published, UserDefaults, live)
     SettingsView.swift                SwiftUI Settings form
     SettingsWindowController.swift    Settings NSWindow; .regular while open, .accessory after

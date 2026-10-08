@@ -50,6 +50,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func present() {
         if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
+            BundledAppIcon.apply()
             onActivationPolicyChange()
         }
         // Activate BEFORE ordering front so the window can become key (enabled traffic
@@ -60,6 +61,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // Activation right after a policy switch is sometimes ignored; retry once on the
         // next main-actor turn.
         Task { @MainActor [weak self] in
+            BundledAppIcon.apply()
             NSApp.activate()
             self?.window?.makeKeyAndOrderFront(nil)
         }

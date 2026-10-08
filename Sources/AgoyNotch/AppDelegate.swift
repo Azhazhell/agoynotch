@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No Dock icon by default — this is a menu-bar accessory. The Settings window
         // temporarily switches to `.regular` while it is open.
         NSApp.setActivationPolicy(.accessory)
+        BundledAppIcon.apply()
 
         // Build the object graph.
         let settings = AppSettings()
@@ -115,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showAbout() {
         // Bring the About panel to the front even though the app is an accessory.
         NSApp.activate()
+        BundledAppIcon.apply()
         NSApp.orderFrontStandardAboutPanel(nil)
     }
 }

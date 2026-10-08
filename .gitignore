@@ -13,3 +13,6 @@ DerivedData/
 
 # App bundle output (scripts/build-app.sh)
 build/
+
+# personal app icon (never commit)
+Resources/AppIcon-custom.png
