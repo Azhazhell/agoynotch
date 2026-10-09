@@ -56,6 +56,15 @@ final class NotchWindowController: NSWindowController {
     /// exactly `screen.frame.maxY` on the top row, so the zone must include that edge.
     private static let topSlop: CGFloat = 3
 
+    /// Safety margins the EXPANDED zone grows by so the whole visible panel — including the
+    /// bottom row of transport buttons — reads as "inside". On-device logs showed the panel's
+    /// controls are painted a few pt BELOW the derived zone bottom (cursor at y≈700 while the
+    /// zone bottom sat at y=713), so a click near the bottom edge tested OUTSIDE and collapsed
+    /// the panel. Lowering the bottom edge by `expandBottomSlop` (and padding the sides/top by
+    /// `expandSideSlop`) makes those clicks land inside. COLLAPSED zone is NOT inflated.
+    private static let expandBottomSlop: CGFloat = 24
+    private static let expandSideSlop: CGFloat = 8
+
     /// Observer tokens. `nonisolated(unsafe)` because the nonisolated `deinit` reads them;
     /// they are written once in `init` and only read again in `deinit`, so there is no race.
     nonisolated(unsafe) private var appObservers: [NSObjectProtocol] = []
@@ -354,13 +363,24 @@ final class NotchWindowController: NSWindowController {
                            width: size.width, height: size.height)
         panel.origin.y -= Self.topSlop
         panel.size.height += Self.topSlop
-        // Union the real window frame when available: if it is already the expanded size this
-        // can only enlarge the zone, and it keeps the zone correct if the panel is ever
-        // placed slightly differently than the derived formula predicts.
+        // Prefer the ACTUAL window frame when it is already the expanded size: deriving from
+        // it keeps the zone matching exactly what is drawn. Union (never shrink) with the
+        // derived rect so a stale collapsed frame can't shrink the zone.
         if let frame = window?.frame {
             panel = panel.union(frame)
         }
-        return panel.union(hover)
+        // Inflate ONLY the expanded panel rect by a safety margin so the entire visible panel
+        // and a little beyond reads as inside. Origin is bottom-left, so lowering the bottom
+        // edge means decreasing origin.y and growing the height by the same amount; the top is
+        // padded by expandSideSlop too. This is what keeps a click on the bottom transport row
+        // (cursor y a few pt below the raw panel bottom) inside instead of collapsing.
+        let inflated = CGRect(
+            x: panel.minX - Self.expandSideSlop,
+            y: panel.minY - Self.expandBottomSlop,
+            width: panel.width + Self.expandSideSlop * 2,
+            height: panel.height + Self.expandBottomSlop + Self.expandSideSlop)
+        // Union with the UN-inflated collapsed hover zone so the notch strip stays reachable.
+        return inflated.union(hover)
     }
 
     /// Whether the REAL cursor is inside the zone that matters right now (hover zone while
@@ -387,8 +407,12 @@ final class NotchWindowController: NSWindowController {
             // so the user can confirm that while expanded zone.height ≈ panelHeight (not 35)
             // and that a cursor dropped from the notch onto the panel reads inside=true.
             let zone = viewModel.isExpanded ? panelZoneOnScreen() : hoverZoneOnScreen()
+            // Print the inflated zone's y-range so the user can confirm mouse.y lands inside
+            // (the expanded zone bottom should now sit well below the transport buttons).
+            let yRange = zone.map { String(format: "%.1f..%.1f", $0.minY, $0.maxY) } ?? "nil"
             print("[AgoyNotch] hover inside=\(inside) expanded=\(viewModel.isExpanded) "
                   + "zoneHeight=\(zone.map { String(format: "%.1f", $0.height) } ?? "nil") "
+                  + "zoneY=\(yRange) "
                   + "zone=\(String(describing: zone)) mouse=\(NSEvent.mouseLocation)")
         }
         #endif
