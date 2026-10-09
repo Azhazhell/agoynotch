@@ -407,6 +407,9 @@ final class NotchWindowController: NSWindowController {
             hostingView.refreshTracking()
             // Re-evaluate on this path too, so a Width/Height change always takes effect.
             evaluateHover()
+            // Authoritative click-through rule, re-applied after the resize so a reposition
+            // can never leave the window stale-ignoring while expanded (the click bug).
+            applyMouseInteractivity(expanded: viewModel.isExpanded)
             return
         }
 
@@ -421,12 +424,18 @@ final class NotchWindowController: NSWindowController {
         //    NEW screen-space zone (so a resized zone takes effect without moving the cursor).
         hostingView.refreshTracking()
 
+        // 5. Authoritative click-through rule, re-applied at the END so a reposition
+        //    (geometry change, display change) can never leave the window stale-ignoring
+        //    while expanded (the click bug) nor accepting clicks while collapsed.
+        applyMouseInteractivity(expanded: viewModel.isExpanded)
+
         #if DEBUG
         print("[AgoyNotch] screen.maxY=\(screenFrame.maxY) window.maxY=\(window.frame.maxY) "
               + "notch=\(notch) safeArea.top=\(screen?.safeAreaInsets.top ?? 0) "
               + "hosting.safeAreaInsets.top=\(hostingView.safeAreaInsets.top) "
               + "expandedSize=\(windowIsExpandedSize) frame=\(window.frame) "
               + "isVisible=\(window.isVisible) "
+              + "ignoresMouseEvents=\(window.ignoresMouseEvents) "
               + "hoverZoneOnScreen=\(String(describing: hoverZoneOnScreen()))")
         #endif
     }
@@ -434,24 +443,40 @@ final class NotchWindowController: NSWindowController {
     /// Grows the window before opening (synchronously, so SwiftUI animates the morph inside
     /// the already-large window) and shrinks it back once the close animation has finished.
     /// Also toggles click-through: interactive only while expanded.
+    ///
+    /// `expanding` carries the NEW expansion state: `setExpanded` calls this synchronously
+    /// BEFORE it writes `viewModel.isExpanded`, so this method must not read
+    /// `viewModel.isExpanded` (still the old value) to decide interactivity — it uses the
+    /// `expanding` argument directly.
     private func expansionWillChange(_ expanding: Bool) {
         pendingShrink?.cancel()
         pendingShrink = nil
         if expanding {
-            window?.ignoresMouseEvents = false
+            // Order on expand: grow to the expanded size, THEN make interactive, THEN become
+            // key — so the first click lands on the already-large, mouse-accepting window.
             if !windowIsExpandedSize {
                 windowIsExpandedSize = true
                 positionWindow()
             }
+            // Single authoritative rule: interactive exactly while expanded. positionWindow()
+            // above applies the same rule from the OLD isExpanded (still false here), so set
+            // it explicitly from `expanding` AFTER the resize so it reads false==interactive.
+            applyMouseInteractivity(expanded: true)
             // Become key so the panel actually receives the first mouse-DOWN: a borderless,
             // never-key panel at this high level drops clicks, so SwiftUI Buttons / taps
             // inside never fire. `.nonactivatingPanel` means becoming key does NOT activate
             // the app or steal focus from the user's foreground app.
             window?.makeKeyAndOrderFront(nil)
+            #if DEBUG
+            print("[AgoyNotch] expand ignoresMouseEvents=\(window?.ignoresMouseEvents ?? true)")
+            #endif
             return
         }
         // Collapsing: give clicks back to the menu bar immediately.
-        window?.ignoresMouseEvents = true
+        applyMouseInteractivity(expanded: false)
+        #if DEBUG
+        print("[AgoyNotch] collapse ignoresMouseEvents=\(window?.ignoresMouseEvents ?? true)")
+        #endif
         // Plain value captured before the Task.
         let duration = max(settings.animationDuration, 0) + 0.05
         let nanos = UInt64(duration * 1_000_000_000)
@@ -464,6 +489,16 @@ final class NotchWindowController: NSWindowController {
         }
     }
 
+    /// The SINGLE, authoritative rule for click-through: the window accepts mouse events
+    /// exactly while expanded (`ignoresMouseEvents == !expanded`). Every path that could
+    /// otherwise leave the flag stale — `expansionWillChange` on the state flip, and the END
+    /// of `positionWindow()` and `ensureVisible()` after a reposition or re-show — funnels
+    /// through here so a later reposition/re-order can never leave it `true` while expanded
+    /// (the click bug) nor `false` while collapsed (swallowing menu-bar clicks).
+    private func applyMouseInteractivity(expanded: Bool) {
+        window?.ignoresMouseEvents = !expanded
+    }
+
     // MARK: - Visibility
 
     /// Orders the panel front (it must never stay hidden after an activation, Space or
@@ -471,6 +506,11 @@ final class NotchWindowController: NSWindowController {
     func ensureVisible() {
         guard let window else { return }
         window.orderFrontRegardless()
+        // Authoritative click-through rule, re-applied after ordering front so an activation,
+        // Space or display change that re-shows the window can never leave it stale-ignoring
+        // mouse events while expanded (the click bug the log showed: ensureVisible left
+        // ignoresMouseEvents=true). Now it reads false whenever the panel is expanded.
+        applyMouseInteractivity(expanded: viewModel.isExpanded)
         evaluateHover()
         #if DEBUG
         print("[AgoyNotch] ensureVisible isVisible=\(window.isVisible) frame=\(window.frame) "
