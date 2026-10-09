@@ -421,6 +421,11 @@ final class NotchWindowController: NSWindowController {
                 windowIsExpandedSize = true
                 positionWindow()
             }
+            // Become key so the panel actually receives the first mouse-DOWN: a borderless,
+            // never-key panel at this high level drops clicks, so SwiftUI Buttons / taps
+            // inside never fire. `.nonactivatingPanel` means becoming key does NOT activate
+            // the app or steal focus from the user's foreground app.
+            window?.makeKeyAndOrderFront(nil)
             return
         }
         // Collapsing: give clicks back to the menu bar immediately.

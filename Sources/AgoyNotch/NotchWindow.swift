@@ -120,8 +120,8 @@ final class NotchWindow: NSPanel {
         hasShadow = false
         // Above the menu bar (mainMenu + 3, the level notch utilities use) so the panel's
         // black top band is drawn OVER the menu-bar strip on both sides of the notch and
-        // fuses with the hardware notch into one shape. Never key/main + `.nonactivatingPanel`,
-        // so the raised level never steals focus.
+        // fuses with the hardware notch into one shape. `.nonactivatingPanel`, so even when the
+        // expanded panel becomes key the raised level never activates the app or steals focus.
         level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         isFloatingPanel = true
         isMovableByWindowBackground = false
@@ -149,7 +149,14 @@ final class NotchWindow: NSPanel {
         frameRect
     }
 
-    // Never steal focus from the user's active app.
-    override var canBecomeKey: Bool { false }
+    // A `.nonactivatingPanel` becoming key does NOT activate the app or pull focus from the
+    // user's foreground app — that is the point of a nonactivating panel. We DO need to be
+    // key while expanded, though: a borderless, never-key panel at this very high level does
+    // not reliably receive the first mouse-DOWN, so SwiftUI Buttons / tap gestures inside the
+    // hosting view never fire (hitTest finds the view but the click is dropped). Allowing key
+    // lets the expanded panel receive clicks. While collapsed the window ignores mouse events
+    // (click-through) and is never made key, so this never shows focus or grabs clicks there.
+    override var canBecomeKey: Bool { true }
+    // Never become MAIN — that would make us the app's primary window and could steal focus.
     override var canBecomeMain: Bool { false }
 }
