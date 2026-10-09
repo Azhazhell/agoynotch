@@ -96,8 +96,11 @@ final class NotchWindowController: NSWindowController {
 
         super.init(window: panel)
 
-        // Tracking-area enter/exit (and tracking rebuilds) just trigger a screen-space
-        // re-evaluation; they carry no inside/outside value of their own.
+        // Tracking-area ENTER (and tracking rebuilds) just trigger a screen-space
+        // re-evaluation; they carry no inside/outside value of their own. The EXIT path is
+        // inert (see NotchHostingView.mouseExited), so the tracking area can only ever OPEN,
+        // never CLOSE — the screen-space poll + mouse-moved monitors are the single source
+        // of truth for close decisions.
         hosting.onPointerEvent = { [weak self] in
             self?.evaluateHover()
         }
@@ -325,15 +328,19 @@ final class NotchWindowController: NSWindowController {
         return configured.union(pill)
     }
 
-    /// The EXPANDED zone in SCREEN coordinates: the whole panel (from `topSlop` above the
-    /// screen top down to the panel bottom) plus the hover zone, so the cursor can travel
-    /// onto the transport buttons without closing the panel.
+    /// The EXPANDED zone in SCREEN coordinates: the ACTUAL window frame on screen (what is
+    /// painted) extended by `topSlop` above the screen top, plus the hover zone, so the
+    /// cursor can travel onto the transport buttons without closing the panel. Using
+    /// `window.frame` directly — not a re-derived `panelSize` rect — guarantees the zone
+    /// always matches exactly what the user sees (both are global, bottom-left origin, the
+    /// same space as `NSEvent.mouseLocation`), so a cursor on the visible panel reads inside.
     func panelZoneOnScreen() -> CGRect? {
-        guard let sf = currentScreenFrame(), let hover = hoverZoneOnScreen() else { return nil }
-        let p = viewModel.panelSize
-        let cx = sf.midX + CGFloat(settings.horizontalOffset)
-        let panel = CGRect(x: cx - p.width / 2, y: sf.maxY - p.height,
-                           width: p.width, height: p.height + Self.topSlop)
+        guard let window, let hover = hoverZoneOnScreen() else { return nil }
+        var panel = window.frame
+        // The window is top-anchored at the screen top; extend upward by topSlop so the very
+        // top row (mouseLocation.y == screen.maxY) still counts as inside.
+        panel.origin.y -= Self.topSlop
+        panel.size.height += Self.topSlop
         return panel.union(hover)
     }
 
@@ -342,7 +349,11 @@ final class NotchWindowController: NSWindowController {
     /// CGRect.contains / NSPointInRect, which treat maxX/maxY as outside.
     func pointerIsInActiveZone() -> Bool {
         let zone = viewModel.isExpanded ? panelZoneOnScreen() : hoverZoneOnScreen()
-        guard let zone else { return false }
+        guard let zone else {
+            // A transient nil zone (e.g. during a resize) must not read as "outside" while
+            // expanded — that would collapse the panel. Preserve the current state instead.
+            return viewModel.isExpanded
+        }
         let p = NSEvent.mouseLocation
         return p.x >= zone.minX && p.x <= zone.maxX && p.y >= zone.minY && p.y <= zone.maxY
     }

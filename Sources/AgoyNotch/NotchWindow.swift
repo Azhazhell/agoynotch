@@ -65,9 +65,11 @@ final class NotchHostingView: NSHostingView<NotchView> {
 
     // MARK: - Pointer events (fast path only)
 
-    /// Called on every tracking-area enter/exit. It carries NO inside/outside value: the
-    /// controller evaluates hover from `NSEvent.mouseLocation` in screen coordinates, so a
-    /// stale, spurious or boundary event location can never flip the hover state.
+    /// Called on tracking-area ENTER (and on refreshTracking) as a cheap fast OPEN path. It
+    /// carries NO inside/outside value: the controller evaluates hover from
+    /// `NSEvent.mouseLocation` in screen coordinates, so a stale, spurious or boundary event
+    /// location can never flip the hover state. The EXIT path deliberately does not call it,
+    /// so the tracking area can never drive a CLOSE (see `mouseExited`).
     var onPointerEvent: (() -> Void)?
 
     // MARK: - Interaction hold
@@ -109,9 +111,14 @@ final class NotchHostingView: NSHostingView<NotchView> {
 
     override func mouseExited(with event: NSEvent) {
         #if DEBUG
-        print("[AgoyNotch] mouseExited")
+        print("[AgoyNotch] mouseExited (ignored for close)")
         #endif
-        onPointerEvent?()
+        // Deliberately does NOT call onPointerEvent?(): the tracking area's exit must never
+        // drive a CLOSE. Becoming key and the resize/rebuild on expand emit spurious exits
+        // whose event location would make the screen-space test read "outside" and collapse
+        // the panel under the cursor. All open/close decisions go through the screen-space
+        // poll + mouse-moved monitors (evaluateHover → pointerIsInActiveZone), which are the
+        // single source of truth. mouseEntered still pings as a cheap fast open path.
     }
 
     // MARK: - Click pass-through
