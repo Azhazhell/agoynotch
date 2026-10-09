@@ -71,8 +71,14 @@ final class AppSettings: ObservableObject {
         // hardware notch, and the narrowest panel (480 pt, half 240) must still cover it.
         // At ±150 the hover zone slid off the notch and a sliver of the real notch showed.
         static let horizontalOffset: ClosedRange<Double> = -60...60
-        static let panelWidth: ClosedRange<Double> = 480...800
-        static let panelHeight: ClosedRange<Double> = 180...320
+        // Width floor lowered to 420 so a narrow slim panel is possible; it must still cover
+        // the hardware notch (half of 420 = 210 pt ≥ a typical notch half-width), so the
+        // black band never leaves a sliver of the real notch showing.
+        static let panelWidth: ClosedRange<Double> = 420...800
+        // Floor lowered to 90 pt so the panel can be made as thin as NotchNook (or thinner);
+        // the expanded content is responsive (see NotchView.PanelMetrics) and tightens /
+        // drops rows as the height shrinks, so nothing is clipped even at the minimum.
+        static let panelHeight: ClosedRange<Double> = 90...320
         static let delay: ClosedRange<Double> = 0...2
         static let animationDuration: ClosedRange<Double> = 0...1
     }
@@ -84,7 +90,9 @@ final class AppSettings: ObservableObject {
         static let hoverHeight: Double = 0
         static let horizontalOffset: Double = 0
         static let panelWidth: Double = 600
-        static let panelHeight: Double = 240
+        // Slim NotchNook-style body: one short row of content hangs just below the notch,
+        // not the old bulky 240 pt. Width stays wide (600 pt) to keep that short-and-wide look.
+        static let panelHeight: Double = 150
         static let openDelay: Double = 0.0
         static let closeDelay: Double = 0.35
         static let animationDuration: Double = 0.35

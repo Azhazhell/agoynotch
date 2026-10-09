@@ -25,6 +25,137 @@
 
 import SwiftUI
 
+/// The expanded panel's black background, shaped like NotchNook / a Dynamic-Island "drip".
+///
+/// Coordinate space is SwiftUI's default for `Shape.path(in:)`: origin top-left, +y DOWN.
+/// The TOP edge is flat and full-width at `y = 0`, so it stays flush with the physical top
+/// of the screen and fuses with the hardware notch. The two TOP-OUTER corners are CONCAVE
+/// fillets drawn with a quadratic Bézier whose control point sits at the INNER diagonal of
+/// the fillet box, so the curve bows AWAY from the sharp corner — the corner is scooped
+/// INWARD and the flat top flows down into each vertical side instead of meeting it at a
+/// hard right angle. The BOTTOM corners are ordinary CONVEX rounded corners.
+///
+/// All radii are clamped so they never exceed half the smaller side (no self-intersections,
+/// no NaN); a degenerate (zero-area) rect yields an empty path.
+struct NotchPanelShape: Shape {
+    /// Concave fillet radius at the two top-outer corners (where the panel meets the notch).
+    var topRadius: CGFloat = 14
+    /// Convex rounded radius at the two bottom corners.
+    var bottomRadius: CGFloat = 20
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        guard w > 0, h > 0 else { return path }
+
+        // Clamp both radii so neither pair can overlap on a short/narrow panel.
+        let maxR = min(w, h) / 2
+        let topR = max(0, min(topRadius, maxR))
+        let botR = max(0, min(bottomRadius, maxR))
+
+        // Coordinate space: origin top-left, +y DOWN. The outline is traced clockwise as it
+        // appears on screen.
+        //
+        // TOP-OUTER corners are CONCAVE: a quadratic Bézier bows TOWARD its control point, so
+        // placing the control at the INNER diagonal of the fillet box (e.g. (w - topR, topR)
+        // for the top-right) pulls the curve AWAY from the sharp outer corner — the corner is
+        // scooped inward and the flat top flows down into the side, the NotchNook "drip".
+        // (A control at the sharp corner would instead round it off convexly.)
+        //
+        // BOTTOM corners are ordinary CONVEX quarter-ish corners: control at the sharp
+        // corner, so the curve bows out to round it.
+
+        // Start on the flat top edge, just right of the top-left concave fillet.
+        path.move(to: CGPoint(x: topR, y: 0))
+        // Flat top edge across to where the top-right concave fillet begins.
+        path.addLine(to: CGPoint(x: w - topR, y: 0))
+        // TOP-RIGHT CONCAVE fillet: (w - topR, 0) → (w, topR), bowing inward (control at the
+        // inner diagonal (w - topR, topR)).
+        path.addQuadCurve(to: CGPoint(x: w, y: topR),
+                          control: CGPoint(x: w - topR, y: topR))
+        // Right side straight down to the bottom-right convex corner.
+        path.addLine(to: CGPoint(x: w, y: h - botR))
+        // BOTTOM-RIGHT CONVEX corner, control at the sharp corner (w, h).
+        path.addQuadCurve(to: CGPoint(x: w - botR, y: h),
+                          control: CGPoint(x: w, y: h))
+        // Bottom edge across to the bottom-left convex corner.
+        path.addLine(to: CGPoint(x: botR, y: h))
+        // BOTTOM-LEFT CONVEX corner, control at the sharp corner (0, h).
+        path.addQuadCurve(to: CGPoint(x: 0, y: h - botR),
+                          control: CGPoint(x: 0, y: h))
+        // Left side straight up to the top-left concave fillet.
+        path.addLine(to: CGPoint(x: 0, y: topR))
+        // TOP-LEFT CONCAVE fillet: (0, topR) → (topR, 0), bowing inward (control at the inner
+        // diagonal (topR, topR)).
+        path.addQuadCurve(to: CGPoint(x: topR, y: 0),
+                          control: CGPoint(x: topR, y: topR))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Responsive sizes for the EXPANDED panel content, all derived from the panel height so the
+/// one short row of content (artwork + metadata + transport, and the clock/calendar column)
+/// scales down and tightens as the panel is made thinner — never clipped, even at the 90 pt
+/// minimum. `availableHeight` is the usable area inside the black shape: the panel height
+/// minus the content top inset (which clears the camera cutout) minus the bottom padding.
+struct PanelMetrics {
+    let panelSize: CGSize
+    let contentTopInset: CGFloat
+
+    /// Bottom padding inside the shape; shrinks with the panel so the row stays centred.
+    var bottomPadding: CGFloat { clamp(availableRaw * 0.12, 6, 18) }
+    var horizontalPadding: CGFloat { clamp(panelSize.width * 0.03, 12, 20) }
+
+    /// Height actually available for the content row (never negative).
+    private var availableRaw: CGFloat { panelSize.height - contentTopInset }
+    var availableHeight: CGFloat { max(availableRaw - bottomPadding, 0) }
+
+    // MARK: - Shape radii (also scale a little with the panel)
+
+    var topConcaveRadius: CGFloat { clamp(panelSize.height * 0.09, 10, 16) }
+    var bottomRadius: CGFloat { clamp(panelSize.height * 0.12, 12, 22) }
+
+    // MARK: - Now Playing
+
+    /// Album art side: fills most of the available row height. Clamped to a tasteful band,
+    /// but never taller than the available height itself, so it can't be clipped even if the
+    /// measured notch is tall and the panel is at its 90 pt minimum.
+    var artSide: CGFloat { min(clamp(availableHeight * 0.9, 36, 72), max(availableHeight, 24)) }
+    var artCornerRadius: CGFloat { clamp(artSide * 0.18, 6, 14) }
+    var artSpacing: CGFloat { clamp(artSide * 0.18, 8, 16) }
+    var columnSpacing: CGFloat { clamp(panelSize.width * 0.025, 10, 18) }
+
+    var titleFont: CGFloat { clamp(artSide * 0.22, 12, 16) }
+    var subtitleFont: CGFloat { clamp(artSide * 0.17, 10, 13) }
+    var titleSpacing: CGFloat { clamp(artSide * 0.05, 2, 4) }
+
+    var transportSide: CGFloat { clamp(artSide * 0.26, 14, 20) }
+    var transportSpacing: CGFloat { clamp(artSide * 0.18, 10, 20) }
+
+    /// Drop the album line first on a short panel (only room for title + artist).
+    var showsAlbum: Bool { availableHeight >= 64 }
+
+    // MARK: - Clock & calendar column
+
+    /// Below this available height there is no room for a second column; the panel shows
+    /// Now Playing full-width and the calendar is dropped entirely (never clipped).
+    var showsCalendar: Bool { availableHeight >= 56 && panelSize.width >= 460 }
+    /// Drop the weekday strip when the column is tight; keep just the clock + big date.
+    var showsWeekStrip: Bool { availableHeight >= 92 }
+    var calendarWidth: CGFloat { clamp(panelSize.width * 0.3, 150, 200) }
+
+    var clockFont: CGFloat { clamp(availableHeight * 0.28, 18, 30) }
+    var monthFont: CGFloat { clamp(availableHeight * 0.13, 11, 14) }
+    var dayFont: CGFloat { clamp(availableHeight * 0.24, 18, 26) }
+    var columnSpacingV: CGFloat { clamp(availableHeight * 0.1, 4, 14) }
+
+    private func clamp(_ value: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
+        min(max(value, lo), hi)
+    }
+}
+
 struct NotchView: View {
 
     /// Created in AppDelegate and injected, so this is `@ObservedObject`, not `@StateObject`.
@@ -33,10 +164,15 @@ struct NotchView: View {
     /// Convenience accessor for the current media snapshot.
     private var info: NowPlayingInfo { viewModel.nowPlaying.info }
 
-    /// Bottom corner radius when expanded / collapsed. Top corners are always flat (0) so
-    /// the top edge lies flush along the top of the screen.
-    private let expandedBottomRadius: CGFloat = 22
+    /// Collapsed bottom corner radius (the pill / bare notch keep their simple rounded
+    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (concave top-outer
+    /// corners, convex rounded bottom), so its radii live on `metrics` below.
     private let collapsedBottomRadius: CGFloat = 10
+
+    /// Responsive sizes for the expanded content, derived from the current panel height so
+    /// nothing is ever clipped as the panel is made thinner (down to the 90 pt minimum).
+    private var metrics: PanelMetrics { PanelMetrics(panelSize: viewModel.panelSize,
+                                                     contentTopInset: viewModel.contentTopInset) }
 
     var body: some View {
         let expanded = viewModel.isExpanded
@@ -44,11 +180,14 @@ struct NotchView: View {
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
-        let bottomRadius = expanded ? expandedBottomRadius : collapsedBottomRadius
-        let shape = UnevenRoundedRectangle(
+        // EXPANDED → the NotchNook "drip" shape (concave top-outer fillets, rounded bottom).
+        // COLLAPSED → the simple flat-top / rounded-bottom shape the pill and bare notch use.
+        let expandedShape = NotchPanelShape(topRadius: metrics.topConcaveRadius,
+                                            bottomRadius: metrics.bottomRadius)
+        let collapsedShape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
-            bottomLeadingRadius: bottomRadius,
-            bottomTrailingRadius: bottomRadius,
+            bottomLeadingRadius: collapsedBottomRadius,
+            bottomTrailingRadius: collapsedBottomRadius,
             topTrailingRadius: 0,
             style: .continuous
         )
@@ -56,8 +195,8 @@ struct NotchView: View {
         content
             // The ONLY top padding: inside the shape, so content clears the camera cutout.
             .padding(.top, viewModel.contentTopInset)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 18)
+            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.bottom, metrics.bottomPadding)
             // Laid out at the full panel size at all times so it never reflows mid-morph;
             // the clip below reveals it as the shape grows.
             .frame(width: panelSize.width, height: panelSize.height, alignment: .top)
@@ -85,10 +224,17 @@ struct NotchView: View {
                 .opacity(pill ? 1 : 0)
             }
             // The black shape: notch- or pill-sized when collapsed, panel-sized when
-            // expanded, top-anchored so it grows down/out of the notch.
+            // expanded, top-anchored so it grows down/out of the notch. Pure black so the
+            // panel fuses with the hardware notch into one shape.
             .frame(width: size.width, height: size.height, alignment: .top)
-            .background(Color.black)
-            .clipShape(shape)
+            .background {
+                if expanded {
+                    expandedShape.fill(Color.black)
+                } else {
+                    collapsedShape.fill(Color.black)
+                }
+            }
+            .clipShape(expanded ? AnyShape(expandedShape) : AnyShape(collapsedShape))
             // Collapsed end state = fully invisible unless the music pill is showing; hover
             // is detected from the cursor position in screen space (NotchWindowController),
             // not by anything drawn here.
@@ -164,13 +310,15 @@ struct NotchView: View {
 
     // MARK: - Content
 
-    /// The expanded panel body: the Now Playing section on the LEFT and the new live
-    /// clock + calendar section on the RIGHT, separated by a subtle vertical divider —
-    /// matching the NotchNook reference. Both columns sit below the camera cutout thanks to
-    /// the top padding applied in `body`.
+    /// The expanded panel body: the Now Playing section on the LEFT and the live clock +
+    /// calendar section on the RIGHT, separated by a subtle vertical divider — matching the
+    /// NotchNook reference. Laid out as a SINGLE short row so it fits the slim panel; all
+    /// sizes come from `metrics`, which scales with the panel height so nothing is clipped
+    /// even at the 90 pt minimum. Both columns sit below the camera cutout thanks to the top
+    /// padding applied in `body`.
     private var content: some View {
-        HStack(alignment: .top, spacing: 18) {
-            // LEFT: the existing Now Playing section, unchanged.
+        HStack(alignment: .center, spacing: metrics.columnSpacing) {
+            // LEFT: Now Playing (compact single row).
             Group {
                 if info.hasMedia {
                     nowPlayingPanel
@@ -180,88 +328,90 @@ struct NotchView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Subtle vertical divider between the two sections.
-            Rectangle()
-                .fill(Color.white.opacity(0.12))
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
+            if metrics.showsCalendar {
+                // Subtle vertical divider between the two sections.
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
 
-            // RIGHT: live clock (ticking seconds) + today's date / mini-week.
-            ClockCalendarView(settings: viewModel.settings)
-                .frame(width: 190, alignment: .topLeading)
+                // RIGHT: live clock (ticking seconds) + today's date / mini-week.
+                ClockCalendarView(settings: viewModel.settings, metrics: metrics)
+                    .frame(width: metrics.calendarWidth, alignment: .topLeading)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    /// The full Now Playing panel, laid out for the taller NotchNook-sized body: a top row
-    /// with the (large) album art beside the title/album/artist stack and the source app's
-    /// icon, and a row of transport controls beneath — all below the camera cutout.
+    /// The compact Now Playing panel: album art beside the title/album/artist stack and the
+    /// source app's icon on one row, with transport controls either beside it (slim panel)
+    /// or beneath it (taller panel). Every size comes from `metrics` so it shrinks instead of
+    /// being clipped as the panel height drops.
     private var nowPlayingPanel: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 16) {
-                // Album art (placeholder when none) — enlarged for the NotchNook body.
-                Group {
-                    if let artwork = info.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        ZStack {
-                            Color.white.opacity(0.08)
-                            Image(systemName: "music.note")
-                                .font(.system(size: 30))
-                                .foregroundStyle(.secondary)
-                        }
+        let m = metrics
+        return HStack(spacing: m.artSpacing) {
+            // Album art (placeholder when none), sized from the panel height.
+            Group {
+                if let artwork = info.artwork {
+                    Image(nsImage: artwork)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    ZStack {
+                        Color.white.opacity(0.08)
+                        Image(systemName: "music.note")
+                            .font(.system(size: m.artSide * 0.38))
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 84, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                // Title / album / artist stacked.
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(info.displayTitle)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    if let album = info.album, !album.isEmpty {
-                        Text(album)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
-                    if !info.displayArtist.isEmpty {
-                        Text(info.displayArtist)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // The source app's icon (Chrome, Spotify, TV…) in the top-right; the
-                // Apple-Music-style glyph when unknown.
-                AppIconImage(bundleID: info.sourceBundleID, size: 18, fallback: .musicGlyph)
             }
+            .frame(width: m.artSide, height: m.artSide)
+            .clipShape(RoundedRectangle(cornerRadius: m.artCornerRadius, style: .continuous))
+
+            // Title / album / artist stacked; text shrinks via minimumScaleFactor so it is
+            // never clipped on a narrow/short panel.
+            VStack(alignment: .leading, spacing: m.titleSpacing) {
+                Text(info.displayTitle)
+                    .font(.system(size: m.titleFont, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .truncationMode(.tail)
+
+                if m.showsAlbum, let album = info.album, !album.isEmpty {
+                    Text(album)
+                        .font(.system(size: m.subtitleFont))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .truncationMode(.tail)
+                }
+
+                if !info.displayArtist.isEmpty {
+                    Text(info.displayArtist)
+                        .font(.system(size: m.subtitleFont))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             // Click artwork / title / artist → bring the playing app to the front.
             .contentShape(Rectangle())
             .onTapGesture { openPlayingApp() }
             .pointingHandCursor()
 
-            // Transport controls, centered on their own row below the metadata.
-            HStack(spacing: 34) {
-                transportButton(system: "backward.fill", size: 20) { viewModel.nowPlaying.previous() }
+            // Transport controls beside the metadata (compact single-row layout).
+            HStack(spacing: m.transportSpacing) {
+                transportButton(system: "backward.fill", size: m.transportSide) { viewModel.nowPlaying.previous() }
                 transportButton(system: info.isPlaying ? "pause.fill" : "play.fill",
-                                size: 26) { viewModel.nowPlaying.togglePlayPause() }
-                transportButton(system: "forward.fill", size: 20) { viewModel.nowPlaying.next() }
+                                size: m.transportSide + 4) { viewModel.nowPlaying.togglePlayPause() }
+                transportButton(system: "forward.fill", size: m.transportSide) { viewModel.nowPlaying.next() }
             }
-            .frame(maxWidth: .infinity)
+            .fixedSize()
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxHeight: .infinity, alignment: .center)
     }
 
     /// Activates the app that is playing (Apple Music when the AppleScript path supplied
@@ -279,11 +429,13 @@ struct NotchView: View {
     private var nothingPlayingPanel: some View {
         HStack(spacing: 10) {
             Image(systemName: "music.note")
-                .font(.system(size: 20))
+                .font(.system(size: metrics.subtitleFont + 7))
                 .foregroundStyle(.white.opacity(0.6))
             Text("Nothing playing")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: metrics.subtitleFont, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

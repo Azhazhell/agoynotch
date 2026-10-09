@@ -29,6 +29,10 @@ struct ClockCalendarView: View {
     /// Colours (Settings → Clock & Calendar). Observed directly so changes apply live.
     @ObservedObject var settings: AppSettings
 
+    /// Responsive sizes derived from the panel height, so the clock + calendar shrink and
+    /// drop the weekday strip on a slim panel instead of being clipped.
+    let metrics: PanelMetrics
+
     // MARK: - Formatters (locale-aware, built once)
 
     /// Live-clock formatters: a fixed 24-hour "HH:mm" plus a separate "ss", so the seconds
@@ -50,7 +54,10 @@ struct ClockCalendarView: View {
         return f
     }()
 
-    private let clockFont = Font.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit()
+    /// Clock font, sized from the panel metrics so it scales with the panel height.
+    private var clockFont: Font {
+        Font.system(size: metrics.clockFont, weight: .semibold, design: .rounded).monospacedDigit()
+    }
 
     /// Month label formatter (e.g. "Aug"), localized to the user's locale.
     private let monthFormatter: DateFormatter = {
@@ -68,7 +75,7 @@ struct ClockCalendarView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: metrics.columnSpacingV) {
             // LIVE CLOCK — re-evaluated every second by the TimelineView, so the seconds tick
             // visibly while the panel is expanded. Auto-pauses when the view leaves screen.
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -82,11 +89,12 @@ struct ClockCalendarView: View {
                         .foregroundStyle(settings.secondsColor)
                 }
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
             }
 
             calendarBlock
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     // MARK: - Calendar block
@@ -98,25 +106,31 @@ struct ClockCalendarView: View {
         let calendar = Calendar.current
         let dayNumber = calendar.component(.day, from: now)
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: max(metrics.columnSpacingV - 4, 3)) {
             // Month label + large day number, like the reference.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(monthFormatter.string(from: now))
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: metrics.monthFont, weight: .medium))
                     .foregroundStyle(settings.dateColor.opacity(0.7))
                 Text("\(dayNumber)")
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .font(.system(size: metrics.dayFont, weight: .bold, design: .rounded))
                     .foregroundStyle(settings.dateColor)
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
 
-            // One-week strip: weekday letters with today highlighted.
-            weekStrip(now: now, calendar: calendar)
+            // One-week strip: weekday letters with today highlighted. Dropped on a slim
+            // panel (not enough vertical room) so nothing is clipped — the clock + big date
+            // are enough there, as in NotchNook.
+            if metrics.showsWeekStrip {
+                weekStrip(now: now, calendar: calendar)
 
-            // Static placeholder (NO EventKit integration — see file header).
-            Text("Nothing for today")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.45))
-                .lineLimit(1)
+                // Static placeholder (NO EventKit integration — see file header).
+                Text("Nothing for today")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .lineLimit(1)
+            }
         }
     }
 
