@@ -25,73 +25,52 @@
 
 import SwiftUI
 
-/// The expanded panel's black background, shaped like NotchNook / a Dynamic-Island "drip".
+/// The expanded panel's black background: a flat-top rounded rectangle that fuses with the
+/// hardware notch and hangs below it like NotchNook.
 ///
 /// Coordinate space is SwiftUI's default for `Shape.path(in:)`: origin top-left, +y DOWN.
 /// The TOP edge is flat and full-width at `y = 0`, so it stays flush with the physical top
-/// of the screen and fuses with the hardware notch. The two TOP-OUTER corners are CONCAVE
-/// fillets drawn with a quadratic Bézier whose control point sits at the INNER diagonal of
-/// the fillet box, so the curve bows AWAY from the sharp corner — the corner is scooped
-/// INWARD and the flat top flows down into each vertical side instead of meeting it at a
-/// hard right angle. The BOTTOM corners are ordinary CONVEX rounded corners.
+/// of the screen and fuses with the hardware notch. The two TOP-OUTER corners are gently
+/// CONVEX rounded (a small radius) so the panel's sides don't meet the flat top at a hard,
+/// sharp right angle — a soft "lekukan" instead. The two BOTTOM corners are ordinary CONVEX
+/// rounded corners with a larger radius.
+///
+/// A previous attempt scooped the top-outer corners CONCAVE (a quadratic bowing inward),
+/// which rendered as a gouged / malformed "coak" notch rather than the smooth NotchNook
+/// drip. This shape drops the concave fillet entirely in favour of a clean, correct
+/// flat-top rounded rectangle — the top corners are softened but never gouged.
 ///
 /// All radii are clamped so they never exceed half the smaller side (no self-intersections,
-/// no NaN); a degenerate (zero-area) rect yields an empty path.
+/// no NaN); a degenerate (zero-area) rect yields an empty path. This is a thin wrapper over
+/// `UnevenRoundedRectangle`, which already draws clean continuous corners, so the clamped
+/// radii are forwarded to it.
 struct NotchPanelShape: Shape {
-    /// Concave fillet radius at the two top-outer corners (where the panel meets the notch).
-    var topRadius: CGFloat = 14
+    /// Convex rounded radius at the two top-outer corners (where the panel meets the notch).
+    var topRadius: CGFloat = 10
     /// Convex rounded radius at the two bottom corners.
     var bottomRadius: CGFloat = 20
 
     func path(in rect: CGRect) -> Path {
-        var path = Path()
         let w = rect.width
         let h = rect.height
-        guard w > 0, h > 0 else { return path }
+        guard w > 0, h > 0 else { return Path() }
 
-        // Clamp both radii so neither pair can overlap on a short/narrow panel.
+        // Clamp both radii so neither pair can overlap on a short/narrow panel (no
+        // self-intersection, no NaN from a tiny panelHeight).
         let maxR = min(w, h) / 2
         let topR = max(0, min(topRadius, maxR))
         let botR = max(0, min(bottomRadius, maxR))
 
-        // Coordinate space: origin top-left, +y DOWN. The outline is traced clockwise as it
-        // appears on screen.
-        //
-        // TOP-OUTER corners are CONCAVE: a quadratic Bézier bows TOWARD its control point, so
-        // placing the control at the INNER diagonal of the fillet box (e.g. (w - topR, topR)
-        // for the top-right) pulls the curve AWAY from the sharp outer corner — the corner is
-        // scooped inward and the flat top flows down into the side, the NotchNook "drip".
-        // (A control at the sharp corner would instead round it off convexly.)
-        //
-        // BOTTOM corners are ordinary CONVEX quarter-ish corners: control at the sharp
-        // corner, so the curve bows out to round it.
-
-        // Start on the flat top edge, just right of the top-left concave fillet.
-        path.move(to: CGPoint(x: topR, y: 0))
-        // Flat top edge across to where the top-right concave fillet begins.
-        path.addLine(to: CGPoint(x: w - topR, y: 0))
-        // TOP-RIGHT CONCAVE fillet: (w - topR, 0) → (w, topR), bowing inward (control at the
-        // inner diagonal (w - topR, topR)).
-        path.addQuadCurve(to: CGPoint(x: w, y: topR),
-                          control: CGPoint(x: w - topR, y: topR))
-        // Right side straight down to the bottom-right convex corner.
-        path.addLine(to: CGPoint(x: w, y: h - botR))
-        // BOTTOM-RIGHT CONVEX corner, control at the sharp corner (w, h).
-        path.addQuadCurve(to: CGPoint(x: w - botR, y: h),
-                          control: CGPoint(x: w, y: h))
-        // Bottom edge across to the bottom-left convex corner.
-        path.addLine(to: CGPoint(x: botR, y: h))
-        // BOTTOM-LEFT CONVEX corner, control at the sharp corner (0, h).
-        path.addQuadCurve(to: CGPoint(x: 0, y: h - botR),
-                          control: CGPoint(x: 0, y: h))
-        // Left side straight up to the top-left concave fillet.
-        path.addLine(to: CGPoint(x: 0, y: topR))
-        // TOP-LEFT CONCAVE fillet: (0, topR) → (topR, 0), bowing inward (control at the inner
-        // diagonal (topR, topR)).
-        path.addQuadCurve(to: CGPoint(x: topR, y: 0),
-                          control: CGPoint(x: topR, y: topR))
-        path.closeSubpath()
-        return path
+        // Flat-top rounded rectangle: softly rounded top-outer corners (small radius) and
+        // ordinary rounded bottom corners (larger radius). Continuous ("squircle") corners
+        // match the NotchNook look.
+        return UnevenRoundedRectangle(
+            topLeadingRadius: topR,
+            bottomLeadingRadius: botR,
+            bottomTrailingRadius: botR,
+            topTrailingRadius: topR,
+            style: .continuous
+        ).path(in: rect)
     }
 }
 
@@ -114,7 +93,9 @@ struct PanelMetrics {
 
     // MARK: - Shape radii (also scale a little with the panel)
 
-    var topConcaveRadius: CGFloat { clamp(panelSize.height * 0.09, 10, 16) }
+    /// Soft (convex) radius for the two top-outer corners — kept small so the top stays
+    /// nearly flat and flush with the notch, just not a hard sharp angle.
+    var topCornerRadius: CGFloat { clamp(panelSize.height * 0.09, 10, 16) }
     var bottomRadius: CGFloat { clamp(panelSize.height * 0.12, 12, 22) }
 
     // MARK: - Now Playing
@@ -165,7 +146,7 @@ struct NotchView: View {
     private var info: NowPlayingInfo { viewModel.nowPlaying.info }
 
     /// Collapsed bottom corner radius (the pill / bare notch keep their simple rounded
-    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (concave top-outer
+    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (soft rounded top-outer
     /// corners, convex rounded bottom), so its radii live on `metrics` below.
     private let collapsedBottomRadius: CGFloat = 10
 
@@ -180,9 +161,10 @@ struct NotchView: View {
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
-        // EXPANDED → the NotchNook "drip" shape (concave top-outer fillets, rounded bottom).
-        // COLLAPSED → the simple flat-top / rounded-bottom shape the pill and bare notch use.
-        let expandedShape = NotchPanelShape(topRadius: metrics.topConcaveRadius,
+        // EXPANDED → the NotchNook flat-top shape (soft rounded top-outer corners, rounded
+        // bottom). COLLAPSED → the simple flat-top / rounded-bottom shape the pill and bare
+        // notch use.
+        let expandedShape = NotchPanelShape(topRadius: metrics.topCornerRadius,
                                             bottomRadius: metrics.bottomRadius)
         let collapsedShape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
