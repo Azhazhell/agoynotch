@@ -275,6 +275,9 @@ final class NotchViewModel: ObservableObject {
         interactionGraceTask = nil
         suppressCloseUntil = .distantFuture
         interactionDepth += 1
+        #if DEBUG
+        print("[AgoyNotch] beginInteraction interactionDepth=\(interactionDepth)")
+        #endif
         // A press cancels any close the hover ticks may have already armed.
         pendingClose?.cancel()
         pendingClose = nil
@@ -284,6 +287,9 @@ final class NotchViewModel: ObservableObject {
     /// which the close path stays suppressed, then re-enables normal hover closing.
     func endInteraction() {
         if interactionDepth > 0 { interactionDepth -= 1 }
+        #if DEBUG
+        print("[AgoyNotch] endInteraction interactionDepth=\(interactionDepth)")
+        #endif
         guard interactionDepth == 0 else { return }
         suppressCloseUntil = Date().addingTimeInterval(0.4)
         interactionGraceTask?.cancel()
@@ -304,11 +310,34 @@ final class NotchViewModel: ObservableObject {
         setExpanded(false)
     }
 
+    /// Force-clears all interaction / close-suppression state so the next open behaves
+    /// EXACTLY like the first. Called on every expansion transition (open AND close).
+    ///
+    /// This is the fix for the "clicks work once, then stop" bug: a badge / Now Playing tap
+    /// fires mouse-DOWN → `beginInteraction()` (interactionDepth = 1, suppressCloseUntil =
+    /// .distantFuture) and then calls `collapseNow()`, which flips the window to
+    /// `ignoresMouseEvents = true` synchronously. The matching mouse-UP is then delivered to
+    /// a window that ignores mouse events, so `endInteraction()` NEVER fires: interactionDepth
+    /// stays 1 and suppressCloseUntil stays .distantFuture forever, wedging `isSuppressingClose`
+    /// true for the rest of the session and jamming the hover/close path on every later open.
+    /// Resetting here guarantees the imbalance can never survive a collapse or a reopen.
+    private func resetInteractionState() {
+        interactionGraceTask?.cancel()
+        interactionGraceTask = nil
+        interactionDepth = 0
+        suppressCloseUntil = .distantPast
+    }
+
     /// The single place `isExpanded` is written.
     private func setExpanded(_ value: Bool) {
         guard isExpanded != value, !isChangingExpansion else { return }
+        // Every transition starts from a clean interaction state: a dropped mouse-UP (e.g. a
+        // tap that collapsed the panel so the UP landed on the now-ignoring window) can never
+        // leave interactionDepth / suppressCloseUntil stuck across an open or close.
+        resetInteractionState()
         #if DEBUG
-        print("[AgoyNotch] \(value ? "open" : "close")")
+        print("[AgoyNotch] \(value ? "open" : "close") "
+              + "reset interactionDepth=\(interactionDepth) isInteracting=\(isSuppressingClose)")
         #endif
         isChangingExpansion = true
         expansionWillChange?(value)
