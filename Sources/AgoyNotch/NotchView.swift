@@ -25,6 +25,86 @@
 
 import SwiftUI
 
+/// The EXPANDED panel outline. The hardware notch is a narrow black rectangle centred at the
+/// top of the screen; the panel is a wider black body hanging below it. Where the panel is
+/// wider than the notch, this shape ADDS a smooth CONVEX "wing" on each side of the notch —
+/// the top silhouette starts flat and flush at the notch's top corners (y = 0) and then
+/// bulges OUTWARD-and-DOWN to the wider body (y = `wingRadius`). Material is added beside the
+/// notch; nothing is scooped inward, so the outline never dips below a straight diagonal from
+/// the notch top to the body (that would be the gouged / "coak" look we must avoid). The
+/// bottom corners are plain convex fillets.
+struct NotchPanelShape: Shape {
+    /// Hardware notch width (clamped to the panel width inside `path`).
+    var notchWidth: CGFloat
+    /// Radius of the outward shoulder "wings" at the top.
+    var wingRadius: CGFloat
+    /// Convex bottom corner radius.
+    var bottomRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        // Clamp the notch to the panel; if it is as wide as (or wider than) the panel there
+        // are no wings — fall back to a plain rounded-bottom / flat-top rectangle.
+        let notchW = min(max(notchWidth, 0), rect.width)
+        let botR = min(max(bottomRadius, 0), min(rect.width / 2, rect.height / 2))
+
+        guard notchW < rect.width else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - botR))
+            path.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
+                        radius: botR, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX + botR, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.minX + botR, y: rect.maxY - botR),
+                        radius: botR, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+            path.closeSubpath()
+            return path
+        }
+
+        let centerX = rect.midX
+        let notchLeft = centerX - notchW / 2
+        let notchRight = centerX + notchW / 2
+
+        // The wing must fit vertically and must not reach past the body edge horizontally.
+        let maxWingByHeight = rect.height / 2
+        let maxWingByWidth = (rect.width - notchW) / 2
+        let r = min(max(wingRadius, 0), min(maxWingByHeight, maxWingByWidth))
+
+        let bodyLeft = notchLeft - r   // outer x the left wing sweeps out to at y = r
+        let bodyRight = notchRight + r // outer x the right wing sweeps out to at y = r
+
+        // Start flat & flush at the notch top-left (y = 0), then convex-bulge OUTWARD-and-down
+        // to the body. The control point sits OUTSIDE (at the body x, y = 0) so the curve
+        // bulges away from the notch — a rounded shoulder that ADDS material.
+        path.move(to: CGPoint(x: notchLeft, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: bodyLeft, y: rect.minY + r),
+                          control: CGPoint(x: bodyLeft, y: rect.minY))
+
+        // Body top edge from the left wing out to the left corner, then down the left body
+        // edge, convex bottom-left corner, across the bottom, convex bottom-right corner, up
+        // the right body edge.
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - botR))
+        path.addArc(center: CGPoint(x: rect.minX + botR, y: rect.maxY - botR),
+                    radius: botR, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
+        path.addLine(to: CGPoint(x: rect.maxX - botR, y: rect.maxY))
+        path.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
+                    radius: botR, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + r))
+
+        // Right wing: convex-bulge OUTWARD-and-up from the body back to the flush notch
+        // top-right (y = 0). Control point OUTSIDE again (body x, y = 0).
+        path.addLine(to: CGPoint(x: bodyRight, y: rect.minY + r))
+        path.addQuadCurve(to: CGPoint(x: notchRight, y: rect.minY),
+                          control: CGPoint(x: bodyRight, y: rect.minY))
+
+        // Flat, flush notch top segment back to the start.
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// Responsive sizes for the EXPANDED panel content, all derived from the panel height so the
 /// one short row of content (artwork + metadata + transport, and the clock/calendar column)
 /// scales down and tightens as the panel is made thinner — never clipped, even at the 90 pt
@@ -105,17 +185,16 @@ struct NotchView: View {
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
-        // EXPANDED → a plain rounded rectangle hanging below the notch. All corners CONVEX:
-        // modest top radii so the top still sits snug under the hardware notch, larger bottom
-        // radii for a nicely rounded body. No custom path, no concave shoulders — this cannot
-        // render a gouged ("coak") outline at any size. COLLAPSED → the simple flat-top /
-        // rounded-bottom shape the pill and bare notch use.
-        let expandedShape = UnevenRoundedRectangle(
-            topLeadingRadius: 14,
-            bottomLeadingRadius: 22,
-            bottomTrailingRadius: 22,
-            topTrailingRadius: 14,
-            style: .continuous
+        // EXPANDED → the body hangs below the notch with a CONVEX outward "wing" added on
+        // each side of the notch: the top is flat & flush at the notch's top corners, then
+        // bulges OUTWARD-and-down to the wider body (material added beside the notch, never
+        // scooped in — so it can't render a gouged "coak" outline). Bottom corners are plain
+        // convex fillets. COLLAPSED → the simple flat-top / rounded-bottom shape the pill and
+        // bare notch use.
+        let expandedShape = NotchPanelShape(
+            notchWidth: viewModel.notchSize.width,
+            wingRadius: 22,
+            bottomRadius: 22
         )
         let collapsedShape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
