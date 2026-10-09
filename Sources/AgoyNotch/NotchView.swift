@@ -188,16 +188,6 @@ struct NotchView: View {
             // Laid out at the full panel size at all times so it never reflows mid-morph;
             // the clip below reveals it as the shape grows.
             .frame(width: panelSize.width, height: panelSize.height, alignment: .top)
-            // Messages / WhatsApp unread badges in the black top band, left of the camera;
-            // vertically centred in the notch height, 8 pt clear of the camera. Fades with
-            // the content and is clipped away while collapsed.
-            .overlay(alignment: .topLeading) {
-                MessageBadgesRow(badges: viewModel.messageBadges.badges,
-                                 onOpen: { viewModel.collapseNow() })
-                    .frame(width: max(viewModel.leftBandWidth - 28, 0),
-                           height: viewModel.notchSize.height, alignment: .leading)
-                    .padding(.leading, 20)
-            }
             .opacity(expanded ? 1 : 0)
             // The pill's wings, top-centred on the panel-sized frame, so after the `size`
             // frame + clip below they sit exactly beside the notch. Hidden while expanded.
@@ -326,6 +316,14 @@ struct NotchView: View {
                 // RIGHT: live clock (ticking seconds) + today's date / mini-week.
                 ClockCalendarView(settings: viewModel.settings, metrics: metrics)
                     .frame(width: metrics.calendarWidth, alignment: .topLeading)
+            }
+
+            // FAR RIGHT: Messages / WhatsApp badges, stacked. They live in the content row,
+            // below the notch band, because clicks in the top strip of the screen are taken by
+            // the macOS menu bar (Help, Window, …) and never reach the panel.
+            if !viewModel.messageBadges.badges.isEmpty {
+                MessageBadgesRow(badges: viewModel.messageBadges.badges,
+                                 onOpen: { viewModel.collapseNow() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

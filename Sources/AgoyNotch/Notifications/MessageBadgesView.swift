@@ -2,7 +2,7 @@
 //  MessageBadgesView.swift
 //  AgoyNotch
 //
-//  The Messages / WhatsApp badges in the open panel's top band, left of the camera: the
+//  The Messages / WhatsApp badges at the right end of the open panel's content row: the
 //  app's icon with its unread count, and nothing else. Apps with no badge are not shown.
 //  Also the optional small red dot beside the notch while collapsed (off by default).
 //
@@ -15,7 +15,7 @@ struct MessageBadgesRow: View {
     var onOpen: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 10) {
             ForEach(badges) { badge in
                 Button {
                     AppLauncher.activate(bundleID: badge.bundleID)
@@ -37,7 +37,7 @@ private struct BadgeIcon: View {
     let badge: MessageBadge
 
     var body: some View {
-        AppIconImage(bundleID: badge.bundleID, size: 18, fallback: .symbol(badge.app.fallbackSymbol))
+        AppIconImage(bundleID: badge.bundleID, size: 26, fallback: .symbol(badge.app.fallbackSymbol))
             .overlay(alignment: .topTrailing) {
                 Text(badge.label)
                     .font(.system(size: 9, weight: .bold, design: .rounded))
