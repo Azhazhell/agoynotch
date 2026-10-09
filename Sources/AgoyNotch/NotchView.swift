@@ -25,138 +25,6 @@
 
 import SwiftUI
 
-/// The expanded panel's black background: a NotchNook-style shape whose centre top is
-/// PINCHED UP into the hardware notch and FLARES OUTWARD-AND-DOWN on both sides into a wider
-/// rounded body — the "the notch melts into the panel" look (user: "like the letter V").
-///
-/// Coordinate space is SwiftUI's default for `Shape.path(in:)`: origin top-left, +y DOWN.
-/// `rect.midX` is the notch centre (the window is centred on the notch), so the profile is
-/// symmetric about `rect.midX`.
-///
-/// Top profile, left → right:
-///   1. The two TOP-OUTER corners are CONVEX rounded (bulge OUTWARD), but they sit LOWER than
-///      the notch — at the panel body's own top, `bodyTop` ≈ the fillet radius below y = 0.
-///   2. From each outer corner the top edge runs inward (flat, at `bodyTop`) toward the
-///      centre, then rises in a CONCAVE fillet — an arc whose centre is ABOVE/OUTSIDE the
-///      body — flaring UP-AND-INWARD to meet the flat notch-width segment at the very top.
-///   3. A flat segment exactly as wide as the hardware notch, flush at `y = 0` (the screen
-///      top), so it fuses with the real notch.
-/// The result: the centre is pinched up into the notch and the shoulders flare outward and
-/// down into the wide body like the mouth of a V/U — never a straight box, never an inward
-/// bite on the OUTER corners, never a gouge.
-///
-/// The two BOTTOM corners are ordinary CONVEX rounded corners.
-///
-/// All radii are clamped so they never exceed the room available (no self-intersections, no
-/// NaN); a degenerate (zero-area) rect yields an empty path, and if the notch is as wide as
-/// (or wider than) the panel the flares collapse to a plain flat-top rounded rectangle.
-struct NotchPanelShape: Shape {
-    /// Width of the hardware notch — the flat top segment flush at `y = 0` that fuses with
-    /// the real notch. The concave shoulders flare outward from its two bottom corners.
-    var notchWidth: CGFloat = 200
-    /// Radius of the concave shoulder fillets AND the vertical drop from the notch top
-    /// (`y = 0`) down to the panel body top. A gentle flare, ~16–28 pt.
-    var filletRadius: CGFloat = 22
-    /// Convex (outward) rounded radius at the two top-outer corners.
-    var topRadius: CGFloat = 20
-    /// Convex (outward) rounded radius at the two bottom corners.
-    var bottomRadius: CGFloat = 20
-
-    func path(in rect: CGRect) -> Path {
-        let w = rect.width
-        let h = rect.height
-        guard w > 0, h > 0 else { return Path() }
-
-        // Fillet radius: a gentle flare, never deeper than half the panel height and never
-        // wider than the room on one side of the notch.
-        let halfSpan = max((w - notchWidth) / 2, 0)
-        let r = max(0, min(filletRadius, min(h / 2, halfSpan)))
-
-        // Clamp the convex top-outer corners: they share the span on each side of the notch
-        // with the shoulder fillet (`r`), so `r + topR` must not exceed `halfSpan`, and the
-        // corner must fit in the height below the body top (`h - bodyTop = h - r`).
-        let maxTop = min(max(halfSpan - r, 0), max(h - r, 0))
-        let topR = max(0, min(topRadius, maxTop))
-        // Bottom corners: never wider than half the panel, and the top-outer corner, the
-        // shoulder drop and the bottom corner must stack within the panel height
-        // (`r + topR + botR <= h`), so the side edges never cross.
-        let botR = max(0, min(bottomRadius, min(min(w, h) / 2, max(h - r - topR, 0))))
-
-        // If the notch spans the whole panel (or there is no room to flare), degrade to a
-        // plain flat-top rounded rectangle — flush top, convex bottom. No flares, no gouge.
-        guard r > 0 else {
-            return UnevenRoundedRectangle(
-                topLeadingRadius: topR,
-                bottomLeadingRadius: botR,
-                bottomTrailingRadius: botR,
-                topTrailingRadius: topR,
-                style: .continuous
-            ).path(in: rect)
-        }
-
-        let centerX = rect.midX
-        let notchLeft = centerX - notchWidth / 2
-        let notchRight = centerX + notchWidth / 2
-        // The panel body's own top edge, below the notch top by the fillet radius.
-        let bodyTop = r
-
-        var p = Path()
-
-        // Start at the top-left of the flat notch segment (very top, y = 0).
-        p.move(to: CGPoint(x: notchLeft, y: 0))
-        // Flat top across the notch width — fuses with the hardware notch.
-        p.addLine(to: CGPoint(x: notchRight, y: 0))
-        // RIGHT concave shoulder: flare OUTWARD-and-DOWN from the notch's bottom-right corner
-        // to the body top. Centre ABOVE/OUTSIDE the body (at y = 0, x = notchRight + r) so the
-        // material curves AWAY from the interior — a concave inner shoulder, the "V/U" mouth.
-        p.addArc(center: CGPoint(x: notchRight + r, y: 0),
-                 radius: r,
-                 startAngle: .degrees(180),
-                 endAngle: .degrees(90),
-                 clockwise: true)
-        // Flat top along the body, running out toward the right-outer convex corner.
-        p.addLine(to: CGPoint(x: rect.maxX - topR, y: bodyTop))
-        // Right-outer CONVEX corner.
-        p.addArc(center: CGPoint(x: rect.maxX - topR, y: bodyTop + topR),
-                 radius: topR,
-                 startAngle: .degrees(-90),
-                 endAngle: .degrees(0),
-                 clockwise: false)
-        // Right side down to the bottom-right convex corner.
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - botR))
-        p.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
-                 radius: botR,
-                 startAngle: .degrees(0),
-                 endAngle: .degrees(90),
-                 clockwise: false)
-        // Bottom edge to the bottom-left convex corner.
-        p.addLine(to: CGPoint(x: rect.minX + botR, y: rect.maxY))
-        p.addArc(center: CGPoint(x: rect.minX + botR, y: rect.maxY - botR),
-                 radius: botR,
-                 startAngle: .degrees(90),
-                 endAngle: .degrees(180),
-                 clockwise: false)
-        // Left side up to the left-outer convex corner.
-        p.addLine(to: CGPoint(x: rect.minX, y: bodyTop + topR))
-        p.addArc(center: CGPoint(x: rect.minX + topR, y: bodyTop + topR),
-                 radius: topR,
-                 startAngle: .degrees(180),
-                 endAngle: .degrees(270),
-                 clockwise: false)
-        // Flat body top running back inward toward the left concave shoulder.
-        p.addLine(to: CGPoint(x: notchLeft - r, y: bodyTop))
-        // LEFT concave shoulder: mirror of the right — flare UP-and-INWARD from the body top
-        // to the notch's bottom-left corner. Centre ABOVE/OUTSIDE at (notchLeft - r, 0).
-        p.addArc(center: CGPoint(x: notchLeft - r, y: 0),
-                 radius: r,
-                 startAngle: .degrees(90),
-                 endAngle: .degrees(0),
-                 clockwise: true)
-        p.closeSubpath()
-        return p
-    }
-}
-
 /// Responsive sizes for the EXPANDED panel content, all derived from the panel height so the
 /// one short row of content (artwork + metadata + transport, and the clock/calendar column)
 /// scales down and tightens as the panel is made thinner — never clipped, even at the 90 pt
@@ -173,15 +41,6 @@ struct PanelMetrics {
     /// Height actually available for the content row (never negative).
     private var availableRaw: CGFloat { panelSize.height - contentTopInset }
     var availableHeight: CGFloat { max(availableRaw - bottomPadding, 0) }
-
-    // MARK: - Shape radii (also scale a little with the panel)
-
-    /// Convex (outward) radius for the two top-outer corners.
-    var topCornerRadius: CGFloat { clamp(panelSize.height * 0.18, 18, 22) }
-    var bottomRadius: CGFloat { clamp(panelSize.height * 0.18, 18, 22) }
-    /// Concave shoulder fillet radius: a gentle outward-and-down flare from the notch into
-    /// the wider body (the "V/U" mouth). Tuned to the notch height band (~16–28 pt).
-    var shoulderRadius: CGFloat { clamp(contentTopInset * 0.6, 16, 28) }
 
     // MARK: - Now Playing
 
@@ -231,9 +90,8 @@ struct NotchView: View {
     private var info: NowPlayingInfo { viewModel.nowPlaying.info }
 
     /// Collapsed bottom corner radius (the pill / bare notch keep their simple rounded
-    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (all corners CONVEX /
-    /// rounded outward — generous top-outer "shoulders" and rounded bottom), so its radii
-    /// live on `metrics` below.
+    /// bottom). The EXPANDED panel uses a plain `UnevenRoundedRectangle` (all corners CONVEX /
+    /// rounded outward — modest top radii, larger bottom radii), defined inline in `body`.
     private let collapsedBottomRadius: CGFloat = 10
 
     /// Responsive sizes for the expanded content, derived from the current panel height so
@@ -247,13 +105,18 @@ struct NotchView: View {
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
-        // EXPANDED → the NotchNook flat-top shape (all corners CONVEX: generous outward
-        // top-outer shoulders + rounded bottom). COLLAPSED → the simple flat-top /
+        // EXPANDED → a plain rounded rectangle hanging below the notch. All corners CONVEX:
+        // modest top radii so the top still sits snug under the hardware notch, larger bottom
+        // radii for a nicely rounded body. No custom path, no concave shoulders — this cannot
+        // render a gouged ("coak") outline at any size. COLLAPSED → the simple flat-top /
         // rounded-bottom shape the pill and bare notch use.
-        let expandedShape = NotchPanelShape(notchWidth: min(viewModel.notchSize.width, panelSize.width),
-                                            filletRadius: metrics.shoulderRadius,
-                                            topRadius: metrics.topCornerRadius,
-                                            bottomRadius: metrics.bottomRadius)
+        let expandedShape = UnevenRoundedRectangle(
+            topLeadingRadius: 14,
+            bottomLeadingRadius: 22,
+            bottomTrailingRadius: 22,
+            topTrailingRadius: 14,
+            style: .continuous
+        )
         let collapsedShape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
             bottomLeadingRadius: collapsedBottomRadius,
