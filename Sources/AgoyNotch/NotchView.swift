@@ -25,83 +25,56 @@
 
 import SwiftUI
 
-/// The EXPANDED panel outline. The hardware notch is a narrow black rectangle centred at the
-/// top of the screen; the panel is a wider black body hanging below it. Where the panel is
-/// wider than the notch, this shape ADDS a smooth CONVEX "wing" on each side of the notch —
-/// the top silhouette starts flat and flush at the notch's top corners (y = 0) and then
-/// bulges OUTWARD-and-DOWN to the wider body (y = `wingRadius`). Material is added beside the
-/// notch; nothing is scooped inward, so the outline never dips below a straight diagonal from
-/// the notch top to the body (that would be the gouged / "coak" look we must avoid). The
-/// bottom corners are plain convex fillets.
+/// The EXPANDED panel outline, NotchNook style. The body is a black rounded rectangle
+/// hanging from the top of the screen, inset by `flareRadius` on each side. At the two TOP
+/// OUTER corners the side edges flare OUTWARD as they rise, reaching the full width at the
+/// very top of the screen (y = 0): the panel gets wider toward the top, like the opening of
+/// a "V", and blends into the menu-bar edge. Material is ADDED at the top corners, never cut
+/// away. The bottom corners are ordinary convex rounded corners.
+///
+/// Each flare is a quadratic curve from the body edge at y = r up to the full width at
+/// y = 0, with its control point at (body edge x, 0). Midpoint check on the right flare
+/// (w = 600, r = 12): from (588, 12) to (600, 0), control (588, 0) -> midpoint (591, 3).
+/// The straight line between the end points passes x = 597 at y = 3, so the curve hugs the
+/// top edge and sweeps out smoothly: an inverted (concave) fillet, like the Dynamic Island.
 struct NotchPanelShape: Shape {
-    /// Hardware notch width (clamped to the panel width inside `path`).
-    var notchWidth: CGFloat
-    /// Radius of the outward shoulder "wings" at the top.
-    var wingRadius: CGFloat
+    /// How far each top corner flares out beyond the body, in points.
+    var flareRadius: CGFloat
     /// Convex bottom corner radius.
     var bottomRadius: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        guard w > 0, h > 0 else { return Path() }
 
-        // Clamp the notch to the panel; if it is as wide as (or wider than) the panel there
-        // are no wings — fall back to a plain rounded-bottom / flat-top rectangle.
-        let notchW = min(max(notchWidth, 0), rect.width)
-        let botR = min(max(bottomRadius, 0), min(rect.width / 2, rect.height / 2))
+        // Flare: at most a quarter of the width and half the height.
+        let r = max(0, min(flareRadius, w / 4, h / 2))
+        let left = rect.minX + r          // body left edge
+        let right = rect.maxX - r         // body right edge
+        // Bottom corners fit inside the body width and below the flare.
+        let b = max(0, min(bottomRadius, (right - left) / 2, h - r))
 
-        guard notchW < rect.width else {
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - botR))
-            path.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
-                        radius: botR, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX + botR, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.minX + botR, y: rect.maxY - botR),
-                        radius: botR, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-            path.closeSubpath()
-            return path
-        }
-
-        let centerX = rect.midX
-        let notchLeft = centerX - notchW / 2
-        let notchRight = centerX + notchW / 2
-
-        // The wing must fit vertically and must not reach past the body edge horizontally.
-        let maxWingByHeight = rect.height / 2
-        let maxWingByWidth = (rect.width - notchW) / 2
-        let r = min(max(wingRadius, 0), min(maxWingByHeight, maxWingByWidth))
-
-        let bodyLeft = notchLeft - r   // outer x the left wing sweeps out to at y = r
-        let bodyRight = notchRight + r // outer x the right wing sweeps out to at y = r
-
-        // Start flat & flush at the notch top-left (y = 0), then convex-bulge OUTWARD-and-down
-        // to the body. The control point sits OUTSIDE (at the body x, y = 0) so the curve
-        // bulges away from the notch — a rounded shoulder that ADDS material.
-        path.move(to: CGPoint(x: notchLeft, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: bodyLeft, y: rect.minY + r),
-                          control: CGPoint(x: bodyLeft, y: rect.minY))
-
-        // Body top edge from the left wing out to the left corner, then down the left body
-        // edge, convex bottom-left corner, across the bottom, convex bottom-right corner, up
-        // the right body edge.
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - botR))
-        path.addArc(center: CGPoint(x: rect.minX + botR, y: rect.maxY - botR),
-                    radius: botR, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-        path.addLine(to: CGPoint(x: rect.maxX - botR, y: rect.maxY))
-        path.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
-                    radius: botR, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + r))
-
-        // Right wing: convex-bulge OUTWARD-and-up from the body back to the flush notch
-        // top-right (y = 0). Control point OUTSIDE again (body x, y = 0).
-        path.addLine(to: CGPoint(x: bodyRight, y: rect.minY + r))
-        path.addQuadCurve(to: CGPoint(x: notchRight, y: rect.minY),
-                          control: CGPoint(x: bodyRight, y: rect.minY))
-
-        // Flat, flush notch top segment back to the start.
-        path.closeSubpath()
-        return path
+        var p = Path()
+        // Full-width top edge at the very top of the screen.
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        // Right flare: from the top-right down and inward to the body edge.
+        p.addQuadCurve(to: CGPoint(x: right, y: rect.minY + r),
+                       control: CGPoint(x: right, y: rect.minY))
+        // Right side, convex bottom-right corner, bottom edge, convex bottom-left corner.
+        p.addLine(to: CGPoint(x: right, y: rect.maxY - b))
+        p.addQuadCurve(to: CGPoint(x: right - b, y: rect.maxY),
+                       control: CGPoint(x: right, y: rect.maxY))
+        p.addLine(to: CGPoint(x: left + b, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: left, y: rect.maxY - b),
+                       control: CGPoint(x: left, y: rect.maxY))
+        // Left side up to the flare, then out to the top-left corner.
+        p.addLine(to: CGPoint(x: left, y: rect.minY + r))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY),
+                       control: CGPoint(x: left, y: rect.minY))
+        p.closeSubpath()
+        return p
     }
 }
 
@@ -174,6 +147,9 @@ struct NotchView: View {
     /// rounded outward — modest top radii, larger bottom radii), defined inline in `body`.
     private let collapsedBottomRadius: CGFloat = 10
 
+    /// How far the expanded panel's top corners flare outward (NotchNook look).
+    static let flareRadius: CGFloat = 12
+
     /// Responsive sizes for the expanded content, derived from the current panel height so
     /// nothing is ever clipped as the panel is made thinner (down to the 90 pt minimum).
     private var metrics: PanelMetrics { PanelMetrics(panelSize: viewModel.panelSize,
@@ -192,8 +168,7 @@ struct NotchView: View {
         // convex fillets. COLLAPSED → the simple flat-top / rounded-bottom shape the pill and
         // bare notch use.
         let expandedShape = NotchPanelShape(
-            notchWidth: viewModel.notchSize.width,
-            wingRadius: 22,
+            flareRadius: Self.flareRadius,
             bottomRadius: 22
         )
         let collapsedShape = UnevenRoundedRectangle(
@@ -207,7 +182,8 @@ struct NotchView: View {
         content
             // The ONLY top padding: inside the shape, so content clears the camera cutout.
             .padding(.top, viewModel.contentTopInset)
-            .padding(.horizontal, metrics.horizontalPadding)
+            // Keep content inside the body, clear of the flared top corners.
+            .padding(.horizontal, metrics.horizontalPadding + Self.flareRadius)
             .padding(.bottom, metrics.bottomPadding)
             // Laid out at the full panel size at all times so it never reflows mid-morph;
             // the clip below reveals it as the shape grows.
