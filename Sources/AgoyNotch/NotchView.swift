@@ -30,24 +30,25 @@ import SwiftUI
 ///
 /// Coordinate space is SwiftUI's default for `Shape.path(in:)`: origin top-left, +y DOWN.
 /// The TOP edge is flat and full-width at `y = 0`, so it stays flush with the physical top
-/// of the screen and fuses with the hardware notch. The two TOP-OUTER corners are gently
-/// CONVEX rounded (a small radius) so the panel's sides don't meet the flat top at a hard,
-/// sharp right angle — a soft "lekukan" instead. The two BOTTOM corners are ordinary CONVEX
-/// rounded corners with a larger radius.
+/// of the screen and fuses with the hardware notch. The two TOP-OUTER corners are generously
+/// CONVEX rounded (bulging OUTWARD and down) so the flat top near the notch flows down-and-out
+/// into the panel's wide body like a rounded "shoulder" — the NotchNook look. The two BOTTOM
+/// corners are ordinary CONVEX rounded corners with a matching radius.
 ///
 /// A previous attempt scooped the top-outer corners CONCAVE (a quadratic bowing inward),
-/// which rendered as a gouged / malformed "coak" notch rather than the smooth NotchNook
-/// drip. This shape drops the concave fillet entirely in favour of a clean, correct
-/// flat-top rounded rectangle — the top corners are softened but never gouged.
+/// which rendered as a gouged / malformed "coak" notch — a bite taken OUT of the panel. The
+/// user was explicit that the corners must curve OUTWARD, not inward. Every corner here is
+/// CONVEX (the centre of each corner arc is INSIDE the panel); there is NO concave/inward
+/// scoop anywhere. This is a thin wrapper over `UnevenRoundedRectangle`, whose continuous
+/// corners are convex by construction.
 ///
 /// All radii are clamped so they never exceed half the smaller side (no self-intersections,
-/// no NaN); a degenerate (zero-area) rect yields an empty path. This is a thin wrapper over
-/// `UnevenRoundedRectangle`, which already draws clean continuous corners, so the clamped
-/// radii are forwarded to it.
+/// no NaN); a degenerate (zero-area) rect yields an empty path.
 struct NotchPanelShape: Shape {
-    /// Convex rounded radius at the two top-outer corners (where the panel meets the notch).
-    var topRadius: CGFloat = 10
-    /// Convex rounded radius at the two bottom corners.
+    /// Convex (outward) rounded radius at the two top-outer corners, where the notch flows
+    /// out into the wider panel body.
+    var topRadius: CGFloat = 20
+    /// Convex (outward) rounded radius at the two bottom corners.
     var bottomRadius: CGFloat = 20
 
     func path(in rect: CGRect) -> Path {
@@ -61,9 +62,10 @@ struct NotchPanelShape: Shape {
         let topR = max(0, min(topRadius, maxR))
         let botR = max(0, min(bottomRadius, maxR))
 
-        // Flat-top rounded rectangle: softly rounded top-outer corners (small radius) and
-        // ordinary rounded bottom corners (larger radius). Continuous ("squircle") corners
-        // match the NotchNook look.
+        // Flat-top rounded rectangle with all four corners CONVEX (rounded OUTWARD). The
+        // top-outer corners read as the notch flowing down-and-out into the wide panel body;
+        // the bottom corners round off the base. Continuous ("squircle") corners match the
+        // NotchNook look. No corner curves inward.
         return UnevenRoundedRectangle(
             topLeadingRadius: topR,
             bottomLeadingRadius: botR,
@@ -93,10 +95,10 @@ struct PanelMetrics {
 
     // MARK: - Shape radii (also scale a little with the panel)
 
-    /// Soft (convex) radius for the two top-outer corners — kept small so the top stays
-    /// nearly flat and flush with the notch, just not a hard sharp angle.
-    var topCornerRadius: CGFloat { clamp(panelSize.height * 0.09, 10, 16) }
-    var bottomRadius: CGFloat { clamp(panelSize.height * 0.12, 12, 22) }
+    /// Convex (outward) radius for the two top-outer corners — generous enough to read as a
+    /// rounded "shoulder" where the notch flows out into the wide panel, never a hard angle.
+    var topCornerRadius: CGFloat { clamp(panelSize.height * 0.18, 18, 22) }
+    var bottomRadius: CGFloat { clamp(panelSize.height * 0.18, 18, 22) }
 
     // MARK: - Now Playing
 
@@ -146,8 +148,9 @@ struct NotchView: View {
     private var info: NowPlayingInfo { viewModel.nowPlaying.info }
 
     /// Collapsed bottom corner radius (the pill / bare notch keep their simple rounded
-    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (soft rounded top-outer
-    /// corners, convex rounded bottom), so its radii live on `metrics` below.
+    /// bottom). The EXPANDED panel uses `NotchPanelShape` instead (all corners CONVEX /
+    /// rounded outward — generous top-outer "shoulders" and rounded bottom), so its radii
+    /// live on `metrics` below.
     private let collapsedBottomRadius: CGFloat = 10
 
     /// Responsive sizes for the expanded content, derived from the current panel height so
@@ -161,9 +164,9 @@ struct NotchView: View {
         let pill = !expanded && viewModel.showsMusicActivity
         let panelSize = viewModel.panelSize
         let size = expanded ? panelSize : (pill ? viewModel.musicActivitySize : viewModel.notchSize)
-        // EXPANDED → the NotchNook flat-top shape (soft rounded top-outer corners, rounded
-        // bottom). COLLAPSED → the simple flat-top / rounded-bottom shape the pill and bare
-        // notch use.
+        // EXPANDED → the NotchNook flat-top shape (all corners CONVEX: generous outward
+        // top-outer shoulders + rounded bottom). COLLAPSED → the simple flat-top /
+        // rounded-bottom shape the pill and bare notch use.
         let expandedShape = NotchPanelShape(topRadius: metrics.topCornerRadius,
                                             bottomRadius: metrics.bottomRadius)
         let collapsedShape = UnevenRoundedRectangle(
