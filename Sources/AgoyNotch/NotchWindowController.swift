@@ -328,19 +328,38 @@ final class NotchWindowController: NSWindowController {
         return configured.union(pill)
     }
 
-    /// The EXPANDED zone in SCREEN coordinates: the ACTUAL window frame on screen (what is
-    /// painted) extended by `topSlop` above the screen top, plus the hover zone, so the
-    /// cursor can travel onto the transport buttons without closing the panel. Using
-    /// `window.frame` directly — not a re-derived `panelSize` rect — guarantees the zone
-    /// always matches exactly what the user sees (both are global, bottom-left origin, the
-    /// same space as `NSEvent.mouseLocation`), so a cursor on the visible panel reads inside.
+    /// The EXPANDED zone in SCREEN coordinates: the full panel the user sees, extended by
+    /// `topSlop` above the screen top and united with the collapsed hover zone, so the cursor
+    /// can travel DOWN from the notch onto the transport buttons without the panel closing.
+    ///
+    /// The panel rect is DERIVED from the current screen frame and the live Settings values
+    /// (`viewModel.windowSize` = the exact expanded window size `positionWindow()` applies,
+    /// placed with the SAME top-anchored, notch-centred formula), NOT read back from
+    /// `window.frame`. The on-device logs showed `window.frame` was still the collapsed
+    /// 259×32 notch size at the moment the hover close was decided — right after
+    /// `makeKeyAndOrderFront`, before the grow had settled — so a `window.frame`-based zone
+    /// read as the tiny 35 px strip and the cursor on the visible panel tested OUTSIDE,
+    /// collapsing the panel before a click could land. Deriving the rect from the settings
+    /// makes the expanded zone always span the full panel height regardless of frame timing.
+    /// The actual `window.frame` is unioned in too (when it is already the larger expanded
+    /// size, it can only grow the zone, never shrink it). All rects are global, bottom-left
+    /// origin — the same space as `NSEvent.mouseLocation`.
     func panelZoneOnScreen() -> CGRect? {
-        guard let window, let hover = hoverZoneOnScreen() else { return nil }
-        var panel = window.frame
-        // The window is top-anchored at the screen top; extend upward by topSlop so the very
-        // top row (mouseLocation.y == screen.maxY) still counts as inside.
+        guard let sf = currentScreenFrame(), let hover = hoverZoneOnScreen() else { return nil }
+        let size = viewModel.windowSize
+        let originX = sf.midX - size.width / 2 + CGFloat(settings.horizontalOffset)
+        // Top-anchored at the screen top; extend upward by topSlop so the very top row
+        // (mouseLocation.y == screen.maxY) still counts as inside.
+        var panel = CGRect(x: originX, y: sf.maxY - size.height,
+                           width: size.width, height: size.height)
         panel.origin.y -= Self.topSlop
         panel.size.height += Self.topSlop
+        // Union the real window frame when available: if it is already the expanded size this
+        // can only enlarge the zone, and it keeps the zone correct if the panel is ever
+        // placed slightly differently than the derived formula predicts.
+        if let frame = window?.frame {
+            panel = panel.union(frame)
+        }
         return panel.union(hover)
     }
 
@@ -364,8 +383,12 @@ final class NotchWindowController: NSWindowController {
         #if DEBUG
         if inside != lastLoggedInside {
             lastLoggedInside = inside
+            // Log the SAME zone pointerIsInActiveZone() just chose, tagged with isExpanded,
+            // so the user can confirm that while expanded zone.height ≈ panelHeight (not 35)
+            // and that a cursor dropped from the notch onto the panel reads inside=true.
             let zone = viewModel.isExpanded ? panelZoneOnScreen() : hoverZoneOnScreen()
             print("[AgoyNotch] hover inside=\(inside) expanded=\(viewModel.isExpanded) "
+                  + "zoneHeight=\(zone.map { String(format: "%.1f", $0.height) } ?? "nil") "
                   + "zone=\(String(describing: zone)) mouse=\(NSEvent.mouseLocation)")
         }
         #endif
