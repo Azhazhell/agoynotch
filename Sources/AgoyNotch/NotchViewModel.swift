@@ -183,6 +183,16 @@ final class NotchViewModel: ObservableObject {
     /// this guard that nested call would schedule a second, redundant pending open.
     func updateHover(isInside: Bool) {
         guard !isChangingExpansion else { return }
+        // While the user is pressing/clicking inside the expanded panel (or just released,
+        // during the grace window), a spurious "outside" read must NOT start a close: the
+        // click (badge open / Now Playing tap / transport button) needs the panel to stay
+        // put while it is processed. The intended close still happens via collapseNow(),
+        // which the badge / Now Playing tap calls explicitly.
+        if !isInside, isSuppressingClose {
+            pendingClose?.cancel()
+            pendingClose = nil
+            return
+        }
         // After a click-to-open collapse, don't reopen until the cursor has left the zone.
         if !isInside { suppressOpenUntilExit = false }
         if isInside, suppressOpenUntilExit { return }
@@ -238,6 +248,51 @@ final class NotchViewModel: ObservableObject {
 
     /// Set by `collapseNow()`; cleared by the next "outside" hover update.
     private var suppressOpenUntilExit = false
+
+    // MARK: - Interaction hold
+
+    /// How many `beginInteraction()` calls are currently unmatched by `endInteraction()`.
+    /// A mouse-DOWN inside the panel increments it; the matching mouse-UP decrements it and
+    /// arms a short grace window (`suppressCloseUntil`), so a spurious hover-exit fired by
+    /// the window becoming key / the click itself cannot collapse the panel underneath it.
+    private var interactionDepth = 0
+    /// While `>= now`, the hover-driven close path is a no-op. Set a short moment after the
+    /// last mouse-UP so AppKit's transient click-time cursor reads can't trigger a close.
+    private var suppressCloseUntil: Date = .distantPast
+    /// Clears `suppressCloseUntil` after the grace window (and re-evaluates nothing itself —
+    /// the next hover tick does, by which point the click has been processed).
+    private var interactionGraceTask: Task<Void, Never>?
+
+    /// True while a click is in progress or within the grace window after it.
+    private var isSuppressingClose: Bool {
+        interactionDepth > 0 || suppressCloseUntil > Date()
+    }
+
+    /// Call on mouse-DOWN inside the expanded panel. Suppresses the hover-driven close for
+    /// the duration of the press (and the trailing grace window after `endInteraction()`).
+    func beginInteraction() {
+        interactionGraceTask?.cancel()
+        interactionGraceTask = nil
+        suppressCloseUntil = .distantFuture
+        interactionDepth += 1
+        // A press cancels any close the hover ticks may have already armed.
+        pendingClose?.cancel()
+        pendingClose = nil
+    }
+
+    /// Call on mouse-UP inside the expanded panel. Opens a short grace window (400 ms) during
+    /// which the close path stays suppressed, then re-enables normal hover closing.
+    func endInteraction() {
+        if interactionDepth > 0 { interactionDepth -= 1 }
+        guard interactionDepth == 0 else { return }
+        suppressCloseUntil = Date().addingTimeInterval(0.4)
+        interactionGraceTask?.cancel()
+        interactionGraceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.suppressCloseUntil = .distantPast
+        }
+    }
 
     /// Closes the panel immediately (after a badge / Now Playing click opened an app).
     func collapseNow() {

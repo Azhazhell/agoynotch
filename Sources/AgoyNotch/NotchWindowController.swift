@@ -102,6 +102,17 @@ final class NotchWindowController: NSWindowController {
             self?.evaluateHover()
         }
 
+        // Interaction hold: while a click inside the expanded panel is in progress (and for a
+        // short grace window after it), the hover-driven CLOSE is suppressed so the click is
+        // delivered without the panel collapsing underneath it. The intended badge / Now
+        // Playing close still happens via collapseNow() in their tap handlers.
+        hosting.onInteractionBegan = { [weak viewModel] in
+            viewModel?.beginInteraction()
+        }
+        hosting.onInteractionEnded = { [weak viewModel] in
+            viewModel?.endInteraction()
+        }
+
         // Lets delayed opens/closes re-check the REAL cursor position when they fire.
         viewModel.pointerInsideProvider = { [weak self] in
             self?.pointerIsInActiveZone() ?? false

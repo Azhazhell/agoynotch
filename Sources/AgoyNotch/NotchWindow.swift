@@ -70,6 +70,36 @@ final class NotchHostingView: NSHostingView<NotchView> {
     /// stale, spurious or boundary event location can never flip the hover state.
     var onPointerEvent: (() -> Void)?
 
+    // MARK: - Interaction hold
+
+    /// Called on mouse-DOWN inside the painted panel so the view model can suppress the
+    /// hover-driven CLOSE while a click is processed (badge open, Now Playing tap, transport
+    /// buttons). Set by the controller.
+    var onInteractionBegan: (() -> Void)?
+    /// Called on the matching mouse-UP so the view model can arm a short grace window and
+    /// then resume normal hover closing. Set by the controller.
+    var onInteractionEnded: (() -> Void)?
+
+    /// Whether `locationInWindow` (window base coordinates, as carried by an NSEvent) lands
+    /// on the painted, interactive panel.
+    private func isInsideInteractiveRect(_ locationInWindow: NSPoint) -> Bool {
+        guard let provider = interactiveRectProvider, let interactive = provider() else { return true }
+        // `convert(_:from: nil)` maps from the window's base coordinate space to this view's.
+        return interactive.contains(convert(locationInWindow, from: nil))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if isInsideInteractiveRect(event.locationInWindow) {
+            onInteractionBegan?()
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        onInteractionEnded?()
+    }
+
     override func mouseEntered(with event: NSEvent) {
         #if DEBUG
         print("[AgoyNotch] mouseEntered")
