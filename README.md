@@ -162,6 +162,17 @@ Everything is computed **locally** from `Date` / `Calendar.current` / `Locale.cu
 telemetry**, and **no Calendar-events (EventKit) integration** — the "Nothing for today" line
 is a static placeholder, not a read of your real events.
 
+## CPU & RAM (expanded)
+
+- The expanded panel's top row shows **CPU usage %** left of the camera (e.g. `23%`) and
+  **memory used** right of it (e.g. `11.2G`, Activity Monitor's "Memory Used") — numbers only.
+  Sampled locally every 1.5 s via public mach host statistics, only while the panel is open;
+  nothing leaves the Mac.
+- The RAM number is green / yellow / red by macOS memory pressure (public sysctl
+  `kern.memorystatus_vm_pressure_level`, read in the same 1.5 s loop, only while open).
+- CPU shows `--%` for ~0.5 s after opening until the first fresh sample (never the last
+  session's value). VoiceOver reads a spoken label, e.g. "CPU 23 percent, memory used 11.2 gigabytes".
+
 ## Now Playing & permissions
 
 **All apps (default).** AgoyNotch runs the vendored
@@ -327,6 +338,9 @@ AgoyNotch/
       DockBadgeReader.swift           reads Dock badge text via Accessibility (background queue)
       MessageBadgeMonitor.swift       polls while enabled, Accessibility prompt/status
       MessageBadgesView.swift         panel badge row (logo + count) and the collapsed dot
+    SystemStats/
+      SystemStatsMonitor.swift        CPU % / RAM used / memory pressure via public mach stats + sysctl (while expanded)
+      SystemStatsTopRow.swift         expanded top row: CPU left of the camera, RAM right of it
     NowPlaying/
       NowPlayingInfo.swift            plain media data model
       AdapterStream.swift             helper JSON lines → snapshot, source precedence (pure)
