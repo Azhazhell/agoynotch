@@ -188,6 +188,15 @@ struct NotchView: View {
             // Laid out at the full panel size at all times so it never reflows mid-morph;
             // the clip below reveals it as the shape grows.
             .frame(width: panelSize.width, height: panelSize.height, alignment: .top)
+            // CPU % left of the camera, RAM used right of it, in the black top band (numbers
+            // only). Fades with the content; clipped away while collapsed. Purely visual.
+            .overlay(alignment: .top) {
+                SystemStatsTopRow(stats: viewModel.systemStats,
+                                  panelWidth: panelSize.width,
+                                  notchSize: viewModel.notchSize,
+                                  leftBandWidth: viewModel.leftBandWidth,
+                                  rightBandWidth: viewModel.rightBandWidth)
+            }
             .opacity(expanded ? 1 : 0)
             // The pill's wings, top-centred on the panel-sized frame, so after the `size`
             // frame + clip below they sit exactly beside the notch. Hidden while expanded.

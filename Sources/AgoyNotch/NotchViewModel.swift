@@ -32,6 +32,9 @@ final class NotchViewModel: ObservableObject {
     /// Messages / WhatsApp unread badges for the open panel.
     let messageBadges: MessageBadgeMonitor
 
+    /// CPU / RAM numbers for the expanded top row; sampled only while expanded.
+    let systemStats = SystemStatsMonitor()
+
     // MARK: - Geometry (all derived from settings)
 
     /// The hardware notch size, measured by NotchWindowController.
@@ -95,10 +98,15 @@ final class NotchViewModel: ObservableObject {
     /// buttons and the clock sit just below the camera cutout instead of behind it.
     var contentTopInset: CGFloat { notchSize.height + 8 }
 
-    /// Width of the panel's black top band left of the camera (where the message badges
-    /// sit). The window is centred at `screen.midX + offset`, the notch at `screen.midX`.
+    /// Width of the panel's black top band left of the camera (where the CPU % sits).
+    /// The window is centred at `screen.midX + offset`, the notch at `screen.midX`.
     var leftBandWidth: CGFloat {
         max(0, panelSize.width / 2 - notchSize.width / 2 - CGFloat(settings.horizontalOffset))
+    }
+
+    /// Width of the panel's black top band right of the camera (where the RAM used sits).
+    var rightBandWidth: CGFloat {
+        max(0, panelSize.width / 2 - notchSize.width / 2 + CGFloat(settings.horizontalOffset))
     }
 
     // MARK: - Private
@@ -142,6 +150,14 @@ final class NotchViewModel: ObservableObject {
             .removeDuplicates()
             .filter { $0 }
             .sink { [weak self] _ in self?.messageBadges.refreshNow() }
+            .store(in: &cancellables)
+        // Sample CPU / RAM only while the panel is open (battery).
+        $isExpanded
+            .removeDuplicates()
+            .sink { [weak self] expanded in
+                guard let self else { return }
+                if expanded { self.systemStats.start() } else { self.systemStats.stop() }
+            }
             .store(in: &cancellables)
     }
 
