@@ -4,7 +4,8 @@
 //
 //  The expanded panel's top row, level with the camera: CPU % right-aligned against the
 //  camera's LEFT edge and RAM used left-aligned against its RIGHT edge. Numbers only — no
-//  labels, no icons. Purely visual (clicks in the menu-bar strip go to the menu bar).
+//  labels, no icons. RAM tinted green/yellow/red by memory pressure; hidden VoiceOver
+//  label. Purely visual (clicks in the menu-bar strip go to the menu bar).
 //
 
 import SwiftUI
@@ -33,19 +34,30 @@ struct SystemStatsTopRow: View {
             Color.clear
                 .frame(width: max(panelWidth - leftW - rightW, 0))
             // RAM: left-aligned against the camera's right edge.
-            label(stats.ramText)
+            label(stats.ramText, color: ramColor)
                 .frame(width: rightW, alignment: .leading)
         }
         // Menu-bar-height strip; text is vertically centred in it.
         .frame(width: panelWidth, height: notchSize.height)
         .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(stats.accessibilityText)
     }
 
-    private func label(_ text: String) -> some View {
+    /// RAM tinted by memory pressure (Activity Monitor style); neutral until the first value.
+    private var ramColor: Color {
+        guard stats.ramUsedBytes != nil else { return .white.opacity(0.75) }
+        switch stats.memoryPressure {
+        case .normal: return Color.green.opacity(0.85)
+        case .warning: return .yellow
+        case .critical: return .red
+        }
+    }
+
+    private func label(_ text: String, color: Color = .white.opacity(0.75)) -> some View {
         Text(text)
             .font(Font.system(size: fontSize, weight: .medium, design: .rounded).monospacedDigit())
-            .foregroundStyle(.white.opacity(0.75))
+            .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
     }
